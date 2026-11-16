@@ -17,5 +17,11 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   - NOT the same build as Default.xbe: its PE section table (in the PDB) has .text 0xD3A7A and D3D 0x17130 vs the XBE's 0xAF9FC / 0xFDE0 (probably debug XDK libs), and PDB signature 0x3C9BD347 is ~2 h after the XBE PE timestamp.
   - Use names, types and module lists as reference; addresses must be matched to the XBE (function signatures, strings, call graph).
 
+## Done
+- 2026-11-15: approach decided, see `docs/design.md`: x86 -> C static recomp, 64-bit host, NV2A push-buffer translation, DSOUND HLE.
+- `tools/pdb2.py procs|modules` (per-module S_GPROC32_ST/S_LPROC32_ST with sizes, 7405 procs, 503 modules).
+- `tools/match_pdb.py <xbe> <pdb> <out.tsv>` maps PDB procs to XBE .text: 1554 exact/moved of 4656 seg-1 procs (40 s). main = 0x11C10, mainXapiStartup = 0xB382C, mainCRTStartup = entry 0xB389B.
+- `tools/xbedis.py <xbe> <va> [n]` capstone disassembly (pip capstone 5.0.7).
+
 ## Next
-- Decide recompiler approach (x86 -> C static recomp vs direct execution with HLE).
+- See ranked list in `docs/design.md`. Start: lifter prototype in `recomp/`.

@@ -71,6 +71,32 @@ def iter_symbols(buf):
         o = n
 
 
+def modules(pdb):
+    """Yield (name, objfile, stream, cbSyms) from the DBI module list."""
+    dbi = pdb.stream(3)
+    cb_modi = struct.unpack_from("<i", dbi, 24)[0]
+    o, end = 64, 64 + cb_modi
+    while o < end:
+        sn, cb_syms = struct.unpack_from("<HI", dbi, o + 34)
+        a = dbi.index(b"\0", o + 64)
+        b = dbi.index(b"\0", a + 1)
+        yield dbi[o + 64 : a].decode("latin-1"), dbi[a + 1 : b].decode("latin-1"), sn, cb_syms
+        o = (b + 1 + 3) & ~3
+
+
+def procs(pdb):
+    """Yield (seg, off, size, name, module, objfile) for S_GPROC32_ST/S_LPROC32_ST."""
+    for mod, obj, sn, cb_syms in modules(pdb):
+        if sn == 0xFFFF or not cb_syms:
+            continue
+        buf = pdb.stream(sn)[4:cb_syms]  # skip CV signature
+        for rectype, body in iter_symbols(buf):
+            if rectype in (0x100A, 0x100B):
+                size, = struct.unpack_from("<I", body, 12)
+                off, seg = struct.unpack_from("<IH", body, 28)
+                yield seg, off, size, pascal(body, 35), mod, obj
+
+
 def pascal(b, o):
     n = b[o]
     return b[o + 1 : o + 1 + n].decode("latin-1")
@@ -96,6 +122,12 @@ def main():
                 _typ, off, seg = struct.unpack_from("<IIH", body, 0)
                 print(f"{seg:04X}:{off:08X} {pascal(body, 10)}")
         print("record types:", {hex(k): v for k, v in types.items()}, file=sys.stderr)
+    elif cmd == "procs":
+        for seg, off, size, name, mod, obj in procs(pdb):
+            print(f"{seg:04X}:{off:08X} {size:6X} {name}\t{mod}\t{obj}")
+    elif cmd == "modules":
+        for mod, obj, sn, cb in modules(pdb):
+            print(f"{sn:5} {cb:8} {mod}\t{obj}")
     elif cmd == "stream":
         open(sys.argv[4], "wb").write(pdb.stream(int(sys.argv[3])))
 

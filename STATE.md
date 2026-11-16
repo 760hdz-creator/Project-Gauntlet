@@ -110,8 +110,22 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   (17k px differ, animation); the flipped convention loses 374k px. GT_CULL=0 / GT_CULLFLIP=1 for debugging.
   The gameplay frame never sets fog (02A4) or lighting (0314).
 
+- 2026-11-16: first realm level reached and played.
+  - Scripted input: `su/sd/sl/sr` = left stick, up to 256 events (GT_INPUT, guest seconds). Events overlap (stick X/Y combine).
+  - Tower hub gates need crystals/claws/feathers (East Wing, Battle Grounds, Mountain Kingdom, Forsaken Province).
+    `GT_CRYSTALS=1`: PlayerNumCrystals (86390, HLE) writes the per-type maximum (table 0x129B0C) into the player's
+    count word (players 0xBB4F60 stride 0x6140, words +0xF52 [slot*0x12A + type]); PlayerHasAllCrystals then passes.
+  - Route to Fields (levelG1): `out/input_forsaken.txt` (git-ignored, regenerate): START+A every 3 s t=30..66, then
+    `85:sl:1.5,87:su:6,95:a,96:su:7,103.5:sl:0.85,103.5:su:0.5,104.5:su:0.6,105.2:sl:0.4` with GT_CRYSTALS=1.
+    Pad I -> Province map -> Loading -> Fields at ~t=123.
+  - Shots: `out/shots/fNNNNN_tSSS.S.bmp` (guest time). `python tools/contact.py out.png <bmps>` = 4-column sheet
+    (needs PIL; run without -I).
+  - Soak: Fields with A held + a movement loop, 15300 frames, 29.4 fps, no crash, no missed targets, no fog/lighting/
+    vertex-program warnings. Combat (attacks, barrels, generators) renders correctly.
+
 ## Next
-1. Play deeper (enter a realm portal, combat) and look for crashes / missing effects.
+1. Play further: finish a level (exit portal), other realms (Battle Grounds etc.), boss (Lich), save/load (U: drive),
+   2+ players. Watch for crashes and the one-time gpu warnings.
 2. Fog (02A4/029C/09C0) and fixed-function lighting, if a later level uses them (each logs once when hit... add
    a one-time log for fog enable in draw_impl first).
 3. Oracle on non-leaf functions: 1563 pass; the remaining fails are unicorn NaN/fyl2x artifacts.

@@ -8,3 +8,4 @@
 /game/
 /build/
 /out/
+__pycache__/

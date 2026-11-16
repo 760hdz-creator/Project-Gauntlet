@@ -23,5 +23,22 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
 - `tools/match_pdb.py <xbe> <pdb> <out.tsv>` maps PDB procs to XBE .text: 1554 exact/moved of 4656 seg-1 procs (40 s). main = 0x11C10, mainXapiStartup = 0xB382C, mainCRTStartup = entry 0xB389B.
 - `tools/xbedis.py <xbe> <va> [n]` capstone disassembly (pip capstone 5.0.7).
 
+- 2026-11-15: lifter `recomp/lift.py` (Python + capstone -> C). `sh tools/relift.sh` = lift + compile (clang-cl, ~1 min) + oracle DLL.
+  - Discovery: strong seeds (entry, PDB exact/moved from `assets/pdb_match.tsv`, call targets), weak seeds (data pointers,
+    push/mov imm32 into code) dropped if their body hits junk opcodes. 4063 functions, 348k insns (some tail duplication),
+    .text coverage 96.0%; 246 jump tables (bounded by cmp on the index reg, or unbounded state-machine tables near the jmp).
+  - Output `out/lifted/`: f_NNN.c, funcs.h, functable.c, functions.tsv (va, insns, calls, fs, indirect, leaf, PDB name),
+    lift_report.txt (unimplemented mnemonics, coverage, largest gaps). 45 unimplemented sites (cvtps2pi, pshufw, fnsave/frstor).
+  - Model: regs + flags are C locals (clang drops dead flag math), synced to X86Context around calls; guest stack is real,
+    `ret` = C return; x87 = ctx.st[8] doubles + top; MMX/SSE helpers in recomp/include/x86simd.h.
+  - `assets/pdb_match.tsv` is git-ignored (disc-derived); regenerate with tools/match_pdb.py. It was pushed once in 8f8fc8c.
+- Differential oracle: `out/oracle.dll` (runtime/oracle/oracle.c) vs unicorn on original bytes:
+  `python -I tools/oracle_test.py [--trials N] [--only VA,..] [-v]` (~6 min for all leaves). Leaf functions: 875 pass,
+  3 known fails (C6E90/D8FA6 `fyl2x` negative input: unicorn/QEMU does not pop; C9290 = rdtsc), 108 skipped (inputs fault).
+  Bugs it found and fixed: fxch with implicit st(0) operand, fsubp/fdivp one-operand forms, rep movsd overlap, 8/16-bit shift UB.
+
 ## Next
-- See ranked list in `docs/design.md`. Start: lifter prototype in `recomp/`.
+1. HLE override list in the lifter (VA -> host function, body skipped) for kernel thunks, XAPI, D3D, DSOUND entry points.
+2. Loader + runtime (`runtime/`): 4 GB reserve, sections, kernel thunk table -> sentinel VAs routed to kernel HLE,
+   TLS/KPCR for fs:, thread start at entry 0xB389B; log missed indirect targets to feed back as seeds.
+3. Extend oracle to non-leaf functions (callees are lifted too); skip ones that reach kernel/fs.

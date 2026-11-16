@@ -13,3 +13,4 @@ __pycache__/
 *.pdb
 *.xbx
 out/
+assets/pdb_match.tsv

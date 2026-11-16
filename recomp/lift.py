@@ -72,7 +72,7 @@ class Program:
         return ins
 
 
-def jump_table(prog, ins, block):
+def jump_table(prog, ins, insns):
     """Recover `jmp [reg*4 + table]`. Returns list of targets or None."""
     op = ins.operands[0]
     if op.type != X.X86_OP_MEM or op.mem.scale != 4 or op.mem.base != 0 or op.mem.index == 0:
@@ -83,26 +83,43 @@ def jump_table(prog, ins, block):
     # cmp r, N / ja def / [movzx r, byte [r + bytetab]] / jmp [r*4 + table]
     limit = None
     bytetab = None
-    for prev in reversed(block[-6:]):
-        if prev.mnemonic == "movzx" and prev.operands[1].type == X.X86_OP_MEM and \
-                prev.reg_name(prev.operands[0].reg) == idx_reg:
-            bytetab = (prev.operands[1].mem.disp & 0xFFFFFFFF, prev.reg_name(prev.operands[1].mem.base))
-        if prev.mnemonic == "cmp" and prev.operands[1].type == X.X86_OP_IMM:
-            limit = prev.operands[1].imm & 0xFFFFFFFF
+    cur = ins.address
+    for _ in range(10):
+        prev = None
+        for back in range(1, 16):
+            p_ = insns.get(cur - back)
+            if p_ is not None and p_.address + p_.size == cur:
+                prev = p_
+                break
+        if prev is None:
             break
+        cur = prev.address
+        ops_ = prev.operands
+        if prev.mnemonic == "movzx" and ops_[1].type == X.X86_OP_MEM and                 prev.reg_name(ops_[0].reg) == idx_reg and bytetab is None:
+            r = ops_[1].mem.base or ops_[1].mem.index
+            bytetab = (ops_[1].mem.disp & 0xFFFFFFFF, prev.reg_name(r))
+        elif prev.mnemonic == "cmp" and len(ops_) == 2 and ops_[1].type == X.X86_OP_IMM and                 ops_[0].type == X.X86_OP_REG:
+            creg = prev.reg_name(ops_[0].reg)
+            if creg == idx_reg or (bytetab is not None and creg == bytetab[1]):
+                limit = ops_[1].imm & 0xFFFFFFFF
+                break
+        elif ops_ and ops_[0].type == X.X86_OP_REG and prev.reg_name(ops_[0].reg) == idx_reg and                 prev.mnemonic not in ("cmp", "test", "push") and bytetab is None:
+            break  # index register redefined before any bound check
     if bytetab is not None and limit is not None:
         raw = prog.xbe.read(bytetab[0], limit + 1)
         count = max(raw) + 1 if raw else 0
     elif limit is not None:
         count = limit + 1
     else:
-        count = None
+        count = None  # unbounded (state machines): take entries that point near the jmp
     targets = []
-    for i in range(count if count is not None else 512):
+    for i in range(count if count is not None else 256):
         b = prog.xbe.read(table + 4 * i, 4)
         if len(b) < 4:
             break
         t = struct.unpack("<I", b)[0]
+        if count is None and not (ins.address - 0x10000 <= t <= ins.address + 0x10000 and plausible(prog, t)):
+            break
         if not prog.is_code(t):
             if count is None:
                 break
@@ -119,6 +136,7 @@ class Function:
         self.tables = {}      # va of jmp -> targets
         self.calls = set()
         self.tails = set()
+        self.imms = set()
 
 
 def discover(prog, start, starts):
@@ -137,6 +155,10 @@ def discover(prog, start, starts):
             block.append(ins)
             m = ins.mnemonic
             nxt = va + ins.size
+            if m in ("push", "mov") and ins.operands[-1].type == X.X86_OP_IMM:
+                imm = ins.operands[-1].imm & 0xFFFFFFFF
+                if imm >= 0x11000 and prog.is_code(imm):
+                    f.imms.add(imm)
             if m == "call":
                 op = ins.operands[0]
                 if op.type == X.X86_OP_IMM:
@@ -159,7 +181,7 @@ def discover(prog, start, starts):
                     va = nxt
                     continue
                 if m == "jmp":
-                    targets = jump_table(prog, ins, block)
+                    targets = jump_table(prog, ins, f.insns)
                     if targets:
                         f.tables[va] = targets
                         for t in targets:
@@ -170,9 +192,9 @@ def discover(prog, start, starts):
     return f
 
 
-def find_seeds(prog, entry, extra):
-    seeds = {entry} | {s for s in extra if prog.is_code(s)}
-    # Pointers in data that look like function starts.
+def find_seeds(prog):
+    """Weak seeds: pointers in data that look like function starts."""
+    seeds = set()
     for n, va, vs, raw, rs in prog.xbe.sections:
         if n not in DATA_SECTIONS:
             continue
@@ -182,9 +204,18 @@ def find_seeds(prog, entry, extra):
             if not prog.is_code(t) or t in seeds:
                 continue
             p = prog.xbe.read(t - 1, 1)
-            if p and p[0] in (0xCC, 0x90, 0xC3) and plausible(prog, t):
+            p3 = prog.xbe.read(t - 3, 1)
+            boundary = (p and p[0] in (0xCC, 0x90, 0xC3)) or (p3 and p3[0] == 0xC2) or t % 16 == 0
+            if boundary and plausible(prog, t):
                 seeds.add(t)
     return seeds
+
+
+def is_junk(f):
+    for ins in f.insns.values():
+        if ins is None or ins.mnemonic in JUNK or ins.mnemonic.startswith(("bnd ", "notrack ", "v")):
+            return True
+    return False
 
 
 JUNK = {"aas", "aaa", "daa", "das", "aam", "aad", "in", "out", "insb", "insd", "insw", "outsb", "outsd", "outsw",
@@ -752,9 +783,10 @@ class Emitter:
         bits = s * 8
         a = self.read(ins, ops[0])
         if kind == "shl":
-            body = (f"r = ({t})(a << n); cf = (a >> ({bits} - n)) & 1; of = (r >> {BITS[s]}) ^ cf;")
+            body = (f"r = ({t})((uint32_t)a << n); cf = n <= {bits} ? ((uint32_t)a >> ({bits} - n)) & 1 : 0; "
+                    f"of = (r >> {BITS[s]}) ^ cf;")
         elif kind == "shr":
-            body = f"r = ({t})(a >> n); cf = (a >> (n - 1)) & 1; of = (a >> {BITS[s]}) & 1;"
+            body = f"r = ({t})((uint32_t)a >> n); cf = ((uint32_t)a >> (n - 1)) & 1; of = (a >> {BITS[s]}) & 1;"
         elif kind == "sar":
             body = f"r = ({t})(({st})a >> (n > {bits - 1} ? {bits - 1} : n)); cf = (({st})a >> (n > {bits} ? {bits - 1} : n - 1)) & 1; of = 0;"
         elif kind == "rol":
@@ -937,7 +969,7 @@ class Emitter:
             stop = "!zf" if prefix in ("repe", "rep") else "zf"
             self.emit(f"while (ecx) {{ {body} ecx--; if ({stop}) break; }}")
         elif kind == "movs" and size == 4:
-            self.emit("if (!c->df && ecx) { memmove(g_mem + edi, g_mem + esi, (size_t)ecx * 4); esi += ecx * 4; edi += ecx * 4; ecx = 0; }")
+            self.emit("if (!c->df && ecx && (edi <= esi || edi >= esi + ecx * 4)) { memmove(g_mem + edi, g_mem + esi, (size_t)ecx * 4); esi += ecx * 4; edi += ecx * 4; ecx = 0; }")
             self.emit(f"while (ecx) {{ {body} ecx--; }}")
         else:
             self.emit(f"while (ecx) {{ {body} ecx--; }}")
@@ -999,7 +1031,7 @@ class Emitter:
                         8: f"WR64({a}, (uint64_t)FIST64(c, ST(0)));"}[sz]
             e(conv + (" FPOP(c);" if m != "fist" else ""))
         elif m == "fxch":
-            i = self.sti(ins, ops[0]) if n else 1
+            i = max((self.sti(ins, o) for o in ops), default=1) or 1
             e(f"{{ double t = ST(0); ST(0) = ST({i}); ST({i}) = t; }}")
         elif m in ("fldz", "fld1", "fldpi", "fldl2e", "fldln2", "fldlg2", "fldl2t"):
             k = {"fldz": "0.0", "fld1": "1.0", "fldpi": "3.14159265358979323846", "fldl2e": "1.44269504088896340736",
@@ -1016,6 +1048,8 @@ class Emitter:
             if n == 0:
                 d, s_ = "ST(1)", "ST(0)"
                 pop = True
+            elif n == 1 and pop:
+                d, s_ = f"ST({self.sti(ins, ops[0])})", "ST(0)"
             elif n == 1:
                 d, s_ = "ST(0)", self.fsrc(ins, ops[0])
             else:
@@ -1107,21 +1141,34 @@ def main():
             va, _size, _name, _mod, status = line.rstrip("\n").split("\t")
             if status in ("exact", "moved"):
                 extra.add(int(va, 16))
-    starts = find_seeds(prog, entry, extra)
-    print(f"seeds: {len(starts)}")
+    strong = {entry} | {s for s in extra if prog.is_code(s)}
+    weak = find_seeds(prog) - strong
+    starts = strong | weak
+    print(f"seeds: {len(strong)} strong, {len(weak)} weak")
 
     funcs = {}
-    work = sorted(starts)
+    rejected = set()
+    work = [(s, True) for s in sorted(strong)] + [(s, False) for s in sorted(weak)]
+    work.reverse()  # strong first
     while work:
-        s = work.pop()
-        if s in funcs:
+        s, is_strong = work.pop()
+        if s in funcs or s in rejected:
             continue
         f = discover(prog, s, starts)
+        if not is_strong and is_junk(f):
+            rejected.add(s)
+            continue
         funcs[s] = f
         for t in f.calls | f.tails:
-            if t not in starts and prog.is_code(t):
+            if t not in funcs and prog.is_code(t):
                 starts.add(t)
-                work.append(t)
+                work.append((t, True))
+        for t in f.imms:
+            if t not in funcs and t not in rejected and plausible(prog, t):
+                starts.add(t)
+                work.append((t, False))
+    starts -= rejected
+    print(f"rejected weak seeds: {len(rejected)}")
     # Second pass: jumps to starts discovered later become tail calls.
     for s in list(funcs):
         funcs[s] = discover(prog, s, starts)
@@ -1150,12 +1197,53 @@ def main():
         for s in order:
             o.write(f"    {{0x{s:08X}u, f_{s:08X}}},\n")
         o.write(f"}};\nconst uint32_t g_functable_count = {len(order)};\n")
+    names = {}
+    if args.seeds:
+        for line in open(args.seeds, encoding="utf-8"):
+            va, _size, name, _mod, status = line.rstrip("\n").split("\t")
+            if status in ("exact", "moved"):
+                names[int(va, 16)] = name
+    with open(os.path.join(args.out, "functions.tsv"), "w", encoding="utf-8") as o:
+        for s_ in order:
+            f = funcs[s_]
+            ins_ = [i for i in f.insns.values() if i is not None]
+            has_fs = any("fs:" in i.op_str for i in ins_)
+            indirect = any(i.mnemonic in ("call", "jmp") and i.operands and i.operands[0].type != X.X86_OP_IMM
+                           and i.address not in f.tables for i in ins_)
+            leaf = not f.calls and not f.tails and not indirect and not has_fs and None not in f.insns.values()
+            o.write(f"{s_:08X}\t{len(ins_)}\t{len(f.calls)}\t{int(has_fs)}\t{int(indirect)}\t{int(leaf)}\t"
+                    f"{names.get(s_, '')}\n")
     with open(os.path.join(args.out, "lift_report.txt"), "w") as o:
         o.write(f"functions {len(funcs)}\nfiles {nfiles}\n")
         o.write(f"jump tables {sum(len(f.tables) for f in funcs.values())}\n")
         o.write("unimplemented:\n")
         for k, v in unimpl.most_common():
             o.write(f"  {k} {v}\n")
+    covered = set()
+    for f in funcs.values():
+        for va, ins in f.insns.items():
+            if ins is not None:
+                covered.update(range(va, va + ins.size))
+    tva, tsize = next((va, rs) for n, va, rs in prog.code if n == ".text")
+    hit = sum(1 for a in covered if tva <= a < tva + tsize)
+    gaps, a = [], tva
+    while a < tva + tsize:
+        if a in covered:
+            a += 1
+            continue
+        b = a
+        while b < tva + tsize and b not in covered:
+            b += 1
+        raw = prog.xbe.read(a, b - a)
+        if raw.strip(bytes([0xCC, 0x90])):
+            gaps.append((b - a, a))
+        a = b
+    gaps.sort(reverse=True)
+    with open(os.path.join(args.out, "lift_report.txt"), "a") as o:
+        o.write(f"text coverage {hit}/{tsize} ({100 * hit / tsize:.1f}%)\nlargest gaps:\n")
+        for size, va in gaps[:200]:
+            o.write(f"  {va:08X} {size:6X} {prog.xbe.read(va, 8).hex()}\n")
+    print(f"text coverage {100 * hit / tsize:.1f}%, {len(gaps)} non-padding gaps")
     print(f"files: {nfiles}, unimplemented sites: {sum(unimpl.values())}")
     print("top unimplemented:", unimpl.most_common(25))
 

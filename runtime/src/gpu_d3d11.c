@@ -904,6 +904,11 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
         static int warned;
         if (!warned++) LOG("[gpu] fixed-function lighting not implemented (using vertex diffuse)\n");
     }
+    if (KREG(K_FOG_ENABLE) & 1) {
+        static int warned;
+        if (!warned++) LOG("[gpu] fog not implemented (mode %X gen %X color %08X)\n", KREG(K_FOG_MODE),
+                           KREG(K_FOG_GEN_MODE), KREG(K_FOG_COLOR));
+    }
     if ((size_t)nv * sizeof(KVertex) > VBUF_SIZE || (size_t)ni * 4 > IBUF_SIZE) return;
     bind_targets();
 
@@ -1074,7 +1079,7 @@ static void screenshot(Surface *s) {
     if (SUCCEEDED(ID3D11DeviceContext_Map(ctx, (ID3D11Resource *)st, 0, D3D11_MAP_READ, 0, &m))) {
         char path[64];
         CreateDirectoryA("out\\shots", NULL);
-        snprintf(path, sizeof path, "out\\shots\\f%05u.bmp", frame_no);
+        snprintf(path, sizeof path, "out\\shots\\f%05u_t%05.1f.bmp", frame_no, sched_now_100ns() / 1e7);
         FILE *f = fopen(path, "wb");
         if (f) {
             uint32_t w = d.Width, h = d.Height, sz = w * h * 4;

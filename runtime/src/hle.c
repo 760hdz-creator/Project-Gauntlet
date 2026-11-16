@@ -34,29 +34,32 @@ static void host_xinput_init(void) {
 static uint32_t packet;
 
 /* ---- scripted input: GT_INPUT="t:button[:hold],..." (t and hold in guest seconds, hold default 0.2) ----
- * buttons: up down left right start back a b x y black white lt rt lthumb rthumb */
-typedef struct { double t, hold; uint16_t digital; int analog; } ScriptEv;
-static ScriptEv script[64];
+ * buttons: up down left right start back a b x y black white lt rt lthumb rthumb,
+ * left stick: su sd sl sr (full deflection) */
+typedef struct { double t, hold; uint16_t digital; int analog; int stick; } ScriptEv;
+static ScriptEv script[256];
 static int n_script = -1;
 
 static void script_init(void) {
     n_script = 0;
     const char *e = getenv("GT_INPUT");
     if (!e) return;
-    char buf[1024];
+    static char buf[8192];
     strncpy(buf, e, sizeof buf - 1);
     buf[sizeof buf - 1] = 0;
-    for (char *tok = strtok(buf, ","); tok && n_script < 64; tok = strtok(NULL, ",")) {
+    for (char *tok = strtok(buf, ","); tok && n_script < 256; tok = strtok(NULL, ",")) {
         char name[16] = {0};
         double t = 0, hold = 0.2;
         if (sscanf(tok, "%lf:%15[a-z]:%lf", &t, name, &hold) < 2) continue;
         static const char *dn[] = {"up", "down", "left", "right", "start", "back", "lthumb", "rthumb"};
         static const char *an[] = {"a", "b", "x", "y", "black", "white", "lt", "rt"};
         ScriptEv *ev = &script[n_script];
-        ev->t = t; ev->hold = hold; ev->digital = 0; ev->analog = -1;
+        static const char *sn[] = {"su", "sd", "sl", "sr"};
+        ev->t = t; ev->hold = hold; ev->digital = 0; ev->analog = -1; ev->stick = -1;
         for (int i = 0; i < 8; i++) if (!strcmp(name, dn[i])) ev->digital = (uint16_t)(1u << i);
         for (int i = 0; i < 8; i++) if (!strcmp(name, an[i])) ev->analog = i;
-        if (ev->digital || ev->analog >= 0) n_script++;
+        for (int i = 0; i < 4; i++) if (!strcmp(name, sn[i])) ev->stick = i;
+        if (ev->digital || ev->analog >= 0 || ev->stick >= 0) n_script++;
         else LOG("[input] unknown button '%s'\n", name);
     }
     LOG("[input] %d scripted events\n", n_script);
@@ -110,6 +113,12 @@ static void fill_state(uint32_t dst, int port) {
             if (now < script[i].t || now >= script[i].t + script[i].hold) continue;
             buttons |= script[i].digital;
             if (script[i].analog >= 0) analog[script[i].analog] = 255;
+            switch (script[i].stick) {
+            case 0: h.Gamepad.sThumbLY = 32767; break;
+            case 1: h.Gamepad.sThumbLY = -32767; break;
+            case 2: h.Gamepad.sThumbLX = -32767; break;
+            case 3: h.Gamepad.sThumbLX = 32767; break;
+            }
         }
     }
     WR32(dst, ++packet);
@@ -126,6 +135,23 @@ static int pad_reported;   /* port 0 insertion reported by XGetDeviceChanges */
 void x86_hle(X86Context *c, uint32_t va) {
     sched_maybe_yield();
     switch (va) {
+    case 0x86390: { /* int PlayerNumCrystals(int player, int type), cdecl (TOWER.OBJ).
+                     * Players at 0xBB4F60 (stride 0x6140); count words at +0xF52 indexed by save slot [+0xC] * 0x12A
+                     * + type; a negative count means "has all" (the per-type maximum at 0x129B0C).
+                     * GT_CRYSTALS=1 (test cheat) sets each queried count to the maximum, which opens the Tower gates
+                     * (PlayerHasAllCrystals 863D0 reads the same words). */
+        static int cheat = -1;
+        if (cheat < 0) { const char *e = getenv("GT_CRYSTALS"); cheat = e ? atoi(e) : 0; }
+        uint32_t p = 0xBB4F60 + ARG(0) * 0x6140, type = ARG(1);
+        uint32_t w = p + 0xF52 + (RD32(p + 0xC) * 0x12A + type) * 2;
+        int max = (int)RD32(0x129B0C + type * 4);
+        int v = (int16_t)RD16(w);
+        if (cheat && v >= 0 && v < max) WR16(w, (uint16_t)(v = max));
+        if (v < 0) v = max;
+        c->eax = (uint32_t)v;
+        c->esp += 4;
+        return;
+    }
     case 0xB1B72: /* DWORD GetTickCount(void): polled in timing loops, so it yields (above) */
         c->eax = (uint32_t)(sched_now_100ns() / 10000);
         c->esp += 4;

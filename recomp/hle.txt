@@ -33,3 +33,6 @@ D6295 IDirectSoundBuffer_SetBufferData
 D65AB IDirectSound_CreateSoundBuffer
 D6765 DirectSoundCreate
 D67AC DirectSoundCreateStream
+
+# Game (TOWER.OBJ): crystal count, for the GT_CRYSTALS test cheat
+86390 PlayerNumCrystals

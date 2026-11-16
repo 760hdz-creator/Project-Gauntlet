@@ -53,6 +53,7 @@ void sched_sleep_until(uint64_t t100ns);
 void kernel_init(void);
 void kernel_poll(void);                              /* timers -> DPCs; called by the scheduler */
 int kernel_call(X86Context *c, uint32_t va);          /* 1 if va was a kernel sentinel */
+void kernel_raise_irq(int level);                    /* device interrupt; ISR runs on the DPC thread */
 uint32_t kernel_wait(uint32_t *objects, int count, int wait_any, int64_t timeout_100ns, int has_timeout);
 
 /* handles (kernel.c) */
@@ -62,6 +63,9 @@ uint32_t handle_new(int kind, uint32_t obj, void *host);
 Handle *handle_get(uint32_t h);
 uint32_t handle_object(uint32_t h);
 typedef uint32_t (*KHandler)(X86Context *c);
+
+/* NV2A (nv2a.c) */
+void nv2a_vblank(void);                              /* called at 60 Hz by kernel_poll */
 
 /* file system (fs.c) */
 void fs_register(KHandler *handlers);

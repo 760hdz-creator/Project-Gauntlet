@@ -446,9 +446,38 @@ K(3, AvSetDisplayMode) { return 0; }
 K(4, AvSetSavedDataAddress) { return 0; }
 K(47, HalRegisterShutdownNotification) { return 0; }
 K(44, HalGetInterruptVector) { if (ARG(1)) WR8(ARG(1), 0); return ARG(0) + 0x30; }
-K(109, KeInitializeInterrupt) { return 0; }
-K(98, KeConnectInterrupt) { return 1; }
-K(100, KeDisconnectInterrupt) { return 1; }
+/* KINTERRUPT: ServiceRoutine(+0) ServiceContext(+4) BusInterruptLevel(+8) Irql(+12) Connected(+16) ShareVector(+17)
+ * Mode(+18). Connected interrupts are raised by device emulation (kernel_raise_irq) and run on the DPC thread. */
+static uint32_t irq_objects[32];
+static volatile uint32_t irq_pending;
+K(109, KeInitializeInterrupt) {
+    /* (Interrupt, ServiceRoutine, ServiceContext, Vector, Irql, InterruptMode, ShareVector) */
+    uint32_t i = ARG(0);
+    WR32(i, ARG(1));
+    WR32(i + 4, ARG(2));
+    WR32(i + 8, (ARG(3) - 0x30) & 31);
+    WR32(i + 12, ARG(4) & 0xFF);
+    WR8(i + 16, 0);
+    WR8(i + 17, (uint8_t)ARG(6));
+    WR8(i + 18, (uint8_t)ARG(5));
+    return 0;
+}
+K(98, KeConnectInterrupt) {
+    uint32_t i = ARG(0), level = RD32(i + 8) & 31;
+    if (RD8(i + 16)) return 0;
+    WR8(i + 16, 1);
+    irq_objects[level] = i;
+    return 1;
+}
+K(100, KeDisconnectInterrupt) {
+    uint32_t i = ARG(0), level = RD32(i + 8) & 31;
+    if (!RD8(i + 16)) return 0;
+    WR8(i + 16, 0);
+    if (irq_objects[level] == i) irq_objects[level] = 0;
+    return 1;
+}
+
+void kernel_raise_irq(int level) { irq_pending |= 1u << level; }
 K(46, HalReadWritePCISpace) {
     /* (Bus, Slot, Register, Buffer, Length, WritePCISpace): reads return zeros */
     if (!ARG(5)) memset(g_mem + ARG(3), 0, ARG(4));
@@ -547,6 +576,11 @@ K(153, KeSynchronizeExecution) {
 
 void kernel_poll(void) {
     uint64_t now = sched_now_100ns();
+    static uint64_t next_vblank;
+    if (now >= next_vblank) {
+        next_vblank = now + 166667;   /* 60 Hz */
+        nv2a_vblank();
+    }
     for (int i = 0; i < ntimers; i++) {
         if (timers[i].due > now) continue;
         uint32_t t = timers[i].timer;
@@ -565,12 +599,25 @@ void kernel_poll(void) {
 /* DPC thread: runs queued DeferredRoutine(Dpc, DeferredContext, Arg1, Arg2) */
 static void dpc_thread(X86Context *c) {
     for (;;) {
+        while (irq_pending) {
+            int level = __builtin_ctz(irq_pending);
+            irq_pending &= ~(1u << level);
+            uint32_t i = irq_objects[level];
+            if (!i) continue;
+            uint32_t args[2] = {i, RD32(i + 4)};
+            if (g_log_kernel) LOG("[k] IRQ %d ISR %08X\n", level, RD32(i));
+            uint8_t old = irql;
+            irql = (uint8_t)RD32(i + 12);
+            guest_call(c, RD32(i), 2, args);
+            irql = old;
+        }
         while (ndpcs) {
             uint32_t d = dpc_queue[0];
             memmove(&dpc_queue[0], &dpc_queue[1], (ndpcs - 1) * 4);
             ndpcs--;
             WR8(d + 2, 0);
             uint32_t args[4] = {d, RD32(d + 16), RD32(d + 20), RD32(d + 24)};
+            if (g_log_kernel) LOG("[k] DPC %08X routine %08X\n", d, RD32(d + 12));
             uint8_t old = irql;
             irql = 2;
             guest_call(c, RD32(d + 12), 4, args);

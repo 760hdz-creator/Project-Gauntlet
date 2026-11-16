@@ -49,6 +49,17 @@ static inline void WR64(uint32_t a, uint64_t v) { memcpy(g_mem + a, &v, 8); }
 static inline void WRF32(uint32_t a, float v) { memcpy(g_mem + a, &v, 4); }
 static inline void WRF64(uint32_t a, double v) { memcpy(g_mem + a, &v, 8); }
 
+/* MMIO-checked accesses (emitted for the XDK D3D section). Addresses >= 0xFD000000 are NV2A/APU registers. */
+uint32_t mmio_read(uint32_t a, int size);
+void mmio_write(uint32_t a, uint32_t v, int size);
+#define IS_MMIO(a) __builtin_expect((a) >= 0xFD000000u, 0)
+static inline uint8_t RD8X(uint32_t a) { return IS_MMIO(a) ? (uint8_t)mmio_read(a, 1) : RD8(a); }
+static inline uint16_t RD16X(uint32_t a) { return IS_MMIO(a) ? (uint16_t)mmio_read(a, 2) : RD16(a); }
+static inline uint32_t RD32X(uint32_t a) { return IS_MMIO(a) ? mmio_read(a, 4) : RD32(a); }
+static inline void WR8X(uint32_t a, uint8_t v) { if (IS_MMIO(a)) mmio_write(a, v, 1); else WR8(a, v); }
+static inline void WR16X(uint32_t a, uint16_t v) { if (IS_MMIO(a)) mmio_write(a, v, 2); else WR16(a, v); }
+static inline void WR32X(uint32_t a, uint32_t v) { if (IS_MMIO(a)) mmio_write(a, v, 4); else WR32(a, v); }
+
 /* ---- flags ---- */
 static inline uint8_t PARITY(uint32_t v) { return (uint8_t)(~__builtin_popcount(v & 0xFF) & 1); }
 

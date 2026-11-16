@@ -42,6 +42,9 @@ COND_ALIAS = {"c": "b", "nae": "b", "nc": "ae", "nb": "ae", "z": "e", "nz": "ne"
               "nbe": "a", "pe": "p", "po": "np", "nge": "l", "nl": "ge", "ng": "le", "nle": "g"}
 
 
+IO_LO, IO_HI = 0x000C0A00, 0x000D07E0  # D3D section
+
+
 def cond(cc):
     return COND[COND_ALIAS.get(cc, cc)]
 
@@ -248,6 +251,8 @@ class Emitter:
         self.starts = starts
         self.out = []
         self.unimpl = collections.Counter()
+        # XDK D3D library code touches NV2A registers: route its memory accesses through the MMIO check.
+        self.io = IO_LO <= func.start < IO_HI
 
     # -- operands --
     def addr(self, ins, op):
@@ -265,6 +270,10 @@ class Emitter:
         elif m.segment and ins.reg_name(m.segment) not in ("ds", "ss", "es", "cs"):
             raise Unsupported(f"segment {ins.reg_name(m.segment)}")
         return "(uint32_t)(" + " + ".join(parts) + ")"
+
+    def stack_based(self, ins, op):
+        b = op.mem.base
+        return b and ins.reg_name(b) == "esp" and not op.mem.index
 
     def reg_read(self, r):
         if r in R32:
@@ -298,7 +307,8 @@ class Emitter:
         if op.type == X.X86_OP_IMM:
             return f"({CTYPE[size]})0x{op.imm & MASK[size]:X}u"
         if op.type == X.X86_OP_MEM:
-            return f"RD{size * 8}({self.addr(ins, op)})"
+            x = "X" if self.io and not self.stack_based(ins, op) else ""
+            return f"RD{size * 8}{x}({self.addr(ins, op)})"
         raise Unsupported("operand")
 
     def write(self, ins, op, v, size=None):
@@ -306,7 +316,8 @@ class Emitter:
         if op.type == X.X86_OP_REG:
             return self.reg_write(ins.reg_name(op.reg), v)
         if op.type == X.X86_OP_MEM:
-            return f"WR{size * 8}({self.addr(ins, op)}, ({CTYPE[size]})({v}));"
+            x = "X" if self.io and not self.stack_based(ins, op) else ""
+            return f"WR{size * 8}{x}({self.addr(ins, op)}, ({CTYPE[size]})({v}));"
         raise Unsupported("write operand")
 
     # -- flag helpers (all emitted; clang removes the dead ones) --
@@ -1162,8 +1173,10 @@ def main():
     work.reverse()  # strong first
     while work:
         s, is_strong = work.pop()
-        if s in funcs or s in rejected:
+        if s in funcs or (s in rejected and not (is_strong or s in strong)):
             continue
+        is_strong = is_strong or s in strong  # a strong seed reached first as a weak immediate stays strong
+        rejected.discard(s)
         f = discover(prog, s, starts)
         if not is_strong and is_junk(f):
             rejected.add(s)

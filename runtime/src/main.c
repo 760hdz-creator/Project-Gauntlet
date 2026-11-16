@@ -70,8 +70,21 @@ void x87_store80(uint32_t a, double v) {
 static LONG WINAPI crash_handler(EXCEPTION_POINTERS *ep) {
     EXCEPTION_RECORD *r = ep->ExceptionRecord;
     uintptr_t addr = r->NumberParameters >= 2 ? (uintptr_t)r->ExceptionInformation[1] : 0;
-    LOG("FATAL: host exception %08lX at %p, data %p (guest %08llX)\n", r->ExceptionCode, r->ExceptionAddress,
-        (void *)addr, (unsigned long long)(addr - (uintptr_t)g_mem));
+    if (r->ExceptionCode < 0xC0000000u) return EXCEPTION_CONTINUE_SEARCH; /* debug prints etc. */
+    HMODULE base = GetModuleHandleA(NULL);
+    LOG("FATAL: host exception %08lX at +%llX, data %p (guest %08llX)\n", r->ExceptionCode,
+        (unsigned long long)((uintptr_t)r->ExceptionAddress - (uintptr_t)base), (void *)addr,
+        (unsigned long long)(addr - (uintptr_t)g_mem));
+    uintptr_t *sp = (uintptr_t *)ep->ContextRecord->Rsp;
+    MEMORY_BASIC_INFORMATION mbi;
+    VirtualQuery(sp, &mbi, sizeof mbi);
+    uintptr_t *end = (uintptr_t *)((uint8_t *)mbi.BaseAddress + mbi.RegionSize);
+    LOG("FATAL: stack:");
+    for (int i = 0, n = 0; sp + i < end && n < 24; i++) {
+        uintptr_t v = sp[i];
+        if (v > (uintptr_t)base && v < (uintptr_t)base + 0x2000000) { LOG(" +%llX", (unsigned long long)(v - (uintptr_t)base)); n++; }
+    }
+    LOG("\n");
     ExitProcess(3);
 }
 
@@ -101,7 +114,9 @@ static DWORD WINAPI watchdog(void *p) {
 
 int main(int argc, char **argv) {
     const char *xbe = argc > 1 ? argv[1] : "game/Default.xbe";
-    SetUnhandledExceptionFilter(crash_handler);
+    ULONG guarantee = 0x10000;
+    SetThreadStackGuarantee(&guarantee);
+    AddVectoredExceptionHandler(1, crash_handler);
     g_missed = fopen("out/missed_targets.txt", "a");
     DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &g_main_thread, 0, FALSE,
                     DUPLICATE_SAME_ACCESS);

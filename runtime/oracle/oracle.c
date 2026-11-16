@@ -41,6 +41,8 @@ void x86_int(X86Context *c, uint32_t va, uint32_t vector) { (void)vector; x86_un
 uint32_t x86_in(X86Context *c, uint32_t port, int size) { (void)size; x86_unimpl(c, port, "in"); return 0; }
 void x86_out(X86Context *c, uint32_t port, uint32_t v, int size) { (void)v; (void)size; x86_unimpl(c, port, "out"); }
 uint64_t x86_rdtsc(X86Context *c) { (void)c; return 0; }
+uint32_t mmio_read(uint32_t a, int size) { (void)size; return RD32(a); }
+void mmio_write(uint32_t a, uint32_t v, int size) { (void)size; WR32(a, v); }
 
 double x87_load80(uint32_t a) {
     uint64_t mant = RD64(a);

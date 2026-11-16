@@ -1,0 +1,10 @@
+# Game assets / dumps (never commit copyrighted data)
+*.iso
+*.xex
+*.elf
+*.dol
+*.rvz
+*.wbfs
+/game/
+/build/
+/out/

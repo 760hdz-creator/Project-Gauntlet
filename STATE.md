@@ -105,8 +105,14 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   - Lifter: `and idx, imm` bounds jump tables; slots that are not code become holes (VC6 memcpy tables have filler
     in slot 0). Fixed the crash at 000B9AEC (memcpy) on entering the Tower. 477 jump tables.
 
+- 2026-11-16: culling on (CULL_FACE 0x404 front / 0x405 back, FRONT_FACE default CW 0x900 -> D3D11
+  FrontCounterClockwise = (ff == 0x901)). Verified at frame 2700 in the Tower: matches the no-cull frame
+  (17k px differ, animation); the flipped convention loses 374k px. GT_CULL=0 / GT_CULLFLIP=1 for debugging.
+  The gameplay frame never sets fog (02A4) or lighting (0314).
+
 ## Next
 1. Play deeper (enter a realm portal, combat) and look for crashes / missing effects.
-2. Culling with correct winding; fog (02A4/029C/09C0); fixed-function lighting if gameplay uses it.
+2. Fog (02A4/029C/09C0) and fixed-function lighting, if a later level uses them (each logs once when hit... add
+   a one-time log for fog enable in draw_impl first).
 3. Oracle on non-leaf functions: 1563 pass; the remaining fails are unicorn NaN/fyl2x artifacts.
 4. Linear resampling in the mixer.

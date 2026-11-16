@@ -857,12 +857,20 @@ static void apply_states(void) {
     }
     ID3D11DeviceContext_OMSetDepthStencilState(ctx, ds, KREG(K_STENCIL_REF) & 0xFF);
 
-    /* rasterizer: culling stays off until winding is verified */
-    uint32_t rk[8] = {0};
+    /* rasterizer. GT_CULL=0 disables culling, GT_CULLFLIP=1 inverts the winding convention (debug). */
+    static int cull_on = -1, cull_flip;
+    if (cull_on < 0) {
+        const char *e = getenv("GT_CULL"); cull_on = !(e && *e == '0');
+        e = getenv("GT_CULLFLIP"); cull_flip = e && *e == '1';
+    }
+    uint32_t ff = KREG(K_FRONT_FACE) ? KREG(K_FRONT_FACE) : 0x900;
+    uint32_t rk[8] = {cull_on && (KREG(K_CULL_EN) & 1), KREG(K_CULL_FACE), ff};
     ID3D11RasterizerState *rs = find_state(rast_states, n_rast, rk);
     if (!rs) {
         D3D11_RASTERIZER_DESC d = {0};
-        d.FillMode = D3D11_FILL_SOLID; d.CullMode = D3D11_CULL_NONE; d.DepthClipEnable = TRUE; d.ScissorEnable = FALSE;
+        d.FillMode = D3D11_FILL_SOLID; d.DepthClipEnable = TRUE; d.ScissorEnable = FALSE;
+        d.CullMode = !rk[0] ? D3D11_CULL_NONE : rk[1] == 0x404 ? D3D11_CULL_FRONT : D3D11_CULL_BACK;
+        d.FrontCounterClockwise = (ff == 0x901) ^ cull_flip;
         ID3D11Device_CreateRasterizerState(dev, &d, &rs);
         add_state(rast_states, &n_rast, 64, rk, rs);
     }

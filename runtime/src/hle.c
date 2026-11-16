@@ -3,6 +3,8 @@
  * (and the keyboard once there is a window).
  */
 #include <windows.h>
+#include <stdlib.h>
+#include <string.h>
 #include "rt.h"
 
 /* stdcall return: pop return address + nargs, set eax */
@@ -31,6 +33,45 @@ static void host_xinput_init(void) {
 
 static uint32_t packet;
 
+/* ---- scripted input: GT_INPUT="t:button[:hold],..." (t and hold in guest seconds, hold default 0.2) ----
+ * buttons: up down left right start back a b x y black white lt rt lthumb rthumb */
+typedef struct { double t, hold; uint16_t digital; int analog; } ScriptEv;
+static ScriptEv script[64];
+static int n_script = -1;
+
+static void script_init(void) {
+    n_script = 0;
+    const char *e = getenv("GT_INPUT");
+    if (!e) return;
+    char buf[1024];
+    strncpy(buf, e, sizeof buf - 1);
+    buf[sizeof buf - 1] = 0;
+    for (char *tok = strtok(buf, ","); tok && n_script < 64; tok = strtok(NULL, ",")) {
+        char name[16] = {0};
+        double t = 0, hold = 0.2;
+        if (sscanf(tok, "%lf:%15[a-z]:%lf", &t, name, &hold) < 2) continue;
+        static const char *dn[] = {"up", "down", "left", "right", "start", "back", "lthumb", "rthumb"};
+        static const char *an[] = {"a", "b", "x", "y", "black", "white", "lt", "rt"};
+        ScriptEv *ev = &script[n_script];
+        ev->t = t; ev->hold = hold; ev->digital = 0; ev->analog = -1;
+        for (int i = 0; i < 8; i++) if (!strcmp(name, dn[i])) ev->digital = (uint16_t)(1u << i);
+        for (int i = 0; i < 8; i++) if (!strcmp(name, an[i])) ev->analog = i;
+        if (ev->digital || ev->analog >= 0) n_script++;
+        else LOG("[input] unknown button '%s'\n", name);
+    }
+    LOG("[input] %d scripted events\n", n_script);
+}
+
+/* keyboard, only while one of our windows has focus */
+static int our_focus(void) {
+    DWORD pid = 0;
+    HWND f = GetForegroundWindow();
+    if (!f) return 0;
+    GetWindowThreadProcessId(f, &pid);
+    return pid == GetCurrentProcessId();
+}
+static int key(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
+
 /* XINPUT_STATE: dwPacketNumber, wButtons, bAnalogButtons[8] (A B X Y BLACK WHITE LT RT), sThumbLX LY RX RY */
 static void fill_state(uint32_t dst, int port) {
     HostState h;
@@ -47,6 +88,30 @@ static void fill_state(uint32_t dst, int port) {
         b & 0x1000 ? 255 : 0, b & 0x2000 ? 255 : 0, b & 0x4000 ? 255 : 0, b & 0x8000 ? 255 : 0,
         b & 0x0200 ? 255 : 0, b & 0x0100 ? 255 : 0, h.Gamepad.bLeftTrigger, h.Gamepad.bRightTrigger,
     };
+    /* keyboard: arrows = dpad, Enter = START, Backspace = BACK, Z/X/C/V = A/B/X/Y, Q/E = LT/RT, WASD = left stick */
+    if (port == 0 && our_focus()) {
+        if (key(VK_UP)) buttons |= 1;
+        if (key(VK_DOWN)) buttons |= 2;
+        if (key(VK_LEFT)) buttons |= 4;
+        if (key(VK_RIGHT)) buttons |= 8;
+        if (key(VK_RETURN)) buttons |= 0x10;
+        if (key(VK_BACK)) buttons |= 0x20;
+        static const int ak[8] = {'Z', 'X', 'C', 'V', 'F', 'G', 'Q', 'E'};
+        for (int i = 0; i < 8; i++) if (key(ak[i])) analog[i] = 255;
+        if (key('A')) h.Gamepad.sThumbLX = -32767;
+        if (key('D')) h.Gamepad.sThumbLX = 32767;
+        if (key('W')) h.Gamepad.sThumbLY = 32767;
+        if (key('S')) h.Gamepad.sThumbLY = -32767;
+    }
+    if (n_script < 0) script_init();
+    if (port == 0 && n_script > 0) {
+        double now = sched_now_100ns() / 1e7;
+        for (int i = 0; i < n_script; i++) {
+            if (now < script[i].t || now >= script[i].t + script[i].hold) continue;
+            buttons |= script[i].digital;
+            if (script[i].analog >= 0) analog[script[i].analog] = 255;
+        }
+    }
     WR32(dst, ++packet);
     WR16(dst + 4, buttons);
     memcpy(g_mem + dst + 6, analog, 8);

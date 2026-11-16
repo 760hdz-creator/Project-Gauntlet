@@ -80,7 +80,33 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
     screen banks (*.vbk), SFX buffers play (ADPCM mono). No crash in 150 s. Nothing is displayed yet (no renderer).
     Remaining unimplemented lift sites: segment mov 9, enter 4, fnsave/frstor. `in` port 0x80C0 polled (logged, returns 0).
 
+- 2026-11-15: D3D11 renderer (`runtime/src/gpu_d3d11.c`, interface `kelvin.h`). Movies, title, attract 3D levels render.
+  - nv2a.c stores every Kelvin method in `g_kreg[method>>2]`, fetches vertices (DRAW_ARRAYS = separate primitives,
+    ARRAY_ELEMENT16/32), builds index lists, calls gpu_draw / gpu_clear / gpu_flip. INLINE_ARRAY not done (logged).
+  - Frame flip: XDK Swap writes the finished surface offset to 1D8C (scratch) then FLIP_INCREMENT_WRITE (0x12C);
+    PCRTC_START is always 0 here, so it is not used.
+  - Game state seen: 640x480 A8R8G8B8 + Z24S8, surfaces 00E20000/00F4C000, zeta 01078000, one VB ring at 011A4000
+    (pos f3, diffuse D3DCOLOR, uv0, uv1; stride 32), fixed-function (1E94=4), lighting off, composite matrix only,
+    I8 paletted swizzled textures, 1-2 combiner stages (PS2 colors: color OCW scale x2).
+  - Combiner OCW bits: 3:0 CD dst, 7:4 AB dst, 11:8 SUM dst, 12 CD dot, 13 AB dot, 14 mux, 15 bias, 17:16 scale,
+    18/19 CD/AB blue-to-alpha (XDK PS_COMBINEROUTPUT << 12). Final combiner CW0 A..D, CW1 E,F,G + bit7 sum clamp.
+  - Culling is off (CULL_FACE alternates per draw; winding unverified). Fog, lighting, vertex programs, cube maps,
+    stage modes other than 2D/pass-through: not done (each logs once).
+  - Overlay: PVIDEO buffer 0 at 02E16000, 320x240 YUY2 pitch 640, shown via gpu_vblank (DPC thread) when no 3D flip
+    for 250 ms. gpu_* calls are serialized by an SRW lock.
+  - Env: GT_SHOT=N (out/shots/fNNNNN.bmp every N flips, ovNNNNN.ppm for overlay), GT_PBFRAME=N (log methods of
+    frame N), GT_PSDUMP=1, GT_NODRAW=1, GT_D3DDEBUG=1. ESC or closing the window exits.
+  - Speed: 29.4 fps everywhere (game's 30 Hz cap), with draws on.
+
+- 2026-11-15: input + gameplay. Keyboard (window focused): arrows = dpad, Enter = START, Backspace = BACK,
+  Z/X/C/V = A/B/X/Y, F/G = black/white, Q/E = LT/RT, WASD = left stick. Scripted: `GT_INPUT="t:button[:hold],..."`
+  (guest seconds). START+A every 3 s from t=30 to 66 reaches name entry, Sorceress select, the Tower intro scrolls
+  and the Tower hub; gameplay renders correctly at 29.4 fps.
+  - Lifter: `and idx, imm` bounds jump tables; slots that are not code become holes (VC6 memcpy tables have filler
+    in slot 0). Fixed the crash at 000B9AEC (memcpy) on entering the Tower. 477 jump tables.
+
 ## Next
-1. Host renderer for the Kelvin methods (window and swapchain first, then Present/flip on vblank).
-2. Oracle on non-leaf functions: 1563 pass; the remaining fails are unicorn NaN/fyl2x artifacts.
-3. Overlay (PVIDEO 0x8900+ regs) display for WMV frames in the renderer; linear resampling in the mixer.
+1. Play deeper (enter a realm portal, combat) and look for crashes / missing effects.
+2. Culling with correct winding; fog (02A4/029C/09C0); fixed-function lighting if gameplay uses it.
+3. Oracle on non-leaf functions: 1563 pass; the remaining fails are unicorn NaN/fyl2x artifacts.
+4. Linear resampling in the mixer.

@@ -98,6 +98,7 @@ def jump_table(prog, ins, insns):
     # cmp r, N / ja def / [movzx r, byte [r + bytetab]] / jmp [r*4 + table]
     limit = None
     bytetab = None
+    mask_bound = False
     cur = ins.address
     for _ in range(10):
         prev = None
@@ -118,6 +119,12 @@ def jump_table(prog, ins, insns):
             if creg == idx_reg or (bytetab is not None and creg == bytetab[1]):
                 limit = ops_[1].imm & 0xFFFFFFFF
                 break
+        elif prev.mnemonic == "and" and len(ops_) == 2 and ops_[1].type == X.X86_OP_IMM and \
+                ops_[0].type == X.X86_OP_REG and prev.reg_name(ops_[0].reg) == idx_reg and bytetab is None and \
+                (ops_[1].imm & 0xFFFFFFFF) < 256:
+            limit = ops_[1].imm & 0xFFFFFFFF   # `and idx, mask` bounds the index (VC6 memcpy/memset tables)
+            mask_bound = True
+            break
         elif ops_ and ops_[0].type == X.X86_OP_REG and prev.reg_name(ops_[0].reg) == idx_reg and                 prev.mnemonic not in ("cmp", "test", "push") and bytetab is None:
             break  # index register redefined before any bound check
     if bytetab is not None and limit is not None:
@@ -138,9 +145,14 @@ def jump_table(prog, ins, insns):
         if not prog.is_code(t):
             if count is None:
                 break
+            if mask_bound:
+                targets.append(None)   # masked index: unreachable slot (memcpy tables start with filler)
+                continue
             return None
         targets.append(t)
-    return targets or None
+    if not any(t is not None for t in targets):
+        return None
+    return targets
 
 
 class Function:
@@ -200,6 +212,8 @@ def discover(prog, start, starts):
                     if targets:
                         f.tables[va] = targets
                         for t in targets:
+                            if t is None:
+                                continue
                             f.labels.add(t)
                             work.append(t)
                     break
@@ -930,7 +944,7 @@ class Emitter:
         idx_expr = None
         if targets:
             idx_expr = self.reg_read(ins.reg_name(op.mem.index))
-            cases = " ".join(f"case {i}: goto L_{t:08X};" for i, t in enumerate(targets))
+            cases = " ".join(f"case {i}: goto L_{t:08X};" for i, t in enumerate(targets) if t is not None)
             self.emit(f"switch ({idx_expr}) {{ {cases} default: break; }}")
         self.emit(f"{{ uint32_t t = {self.read(ins, op, 4)}; {self.sync_out()} x86_call_indirect(c, t); return; }}")
 

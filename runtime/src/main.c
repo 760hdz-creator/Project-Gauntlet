@@ -39,7 +39,15 @@ void x86_int(X86Context *c, uint32_t va, uint32_t vector) {
     if (vector == 3) { LOG("[rt] int3 at %08X ignored\n", va); c->esp += 0; return; }
     rt_fatal("int %u at %08X", vector, va);
 }
-uint32_t x86_in(X86Context *c, uint32_t port, int size) { (void)c; LOG("[rt] in port %X size %d\n", port, size); return 0; }
+uint32_t x86_in(X86Context *c, uint32_t port, int size) {
+    static uint32_t logged[16];
+    static int nlogged;
+    (void)c;
+    for (int i = 0; i < nlogged; i++) if (logged[i] == port) return 0;
+    if (nlogged < 16) logged[nlogged++] = port;
+    LOG("[rt] in port %X size %d (logged once)\n", port, size);
+    return 0;
+}
 void x86_out(X86Context *c, uint32_t port, uint32_t v, int size) { (void)c; LOG("[rt] out port %X = %X size %d\n", port, v, size); }
 uint64_t x86_rdtsc(X86Context *c) { (void)c; return sched_now_100ns() * 733 / 10; /* 733 MHz */ }
 

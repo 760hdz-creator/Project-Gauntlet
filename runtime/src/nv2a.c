@@ -4,7 +4,10 @@
  * the cases below override reads and writes where the driver waits on hardware.
  */
 #include <stdlib.h>
+#include <windows.h>
+#include <string.h>
 #include "rt.h"
+#include "kelvin.h"
 
 #define NV_BASE         0xFD000000u
 #define NV_SIZE         0x01000000u
@@ -69,14 +72,208 @@ static uint32_t dma_base(uint32_t handle) {
     return ((w2 & 0xFFFFF000u) | (w0 >> 20)) & 0x03FFFFFF;
 }
 
-/* Kelvin state the "GPU" acts on (no rendering yet). */
+/* Kelvin state the "GPU" acts on. */
 static uint32_t k_dma_semaphore, k_semaphore_offset;
+uint32_t g_kreg[0x800];
+
+uint32_t nv2a_dma_base(uint32_t handle) {
+    static uint32_t cache_h[16], cache_b[16];
+    static int n;
+    for (int i = 0; i < n; i++) if (cache_h[i] == handle) return cache_b[i];
+    uint32_t b = dma_base(handle);
+    if (n < 16) { cache_h[n] = handle; cache_b[n] = b; n++; }
+    LOG("[pb] DMA handle %X base %08X\n", handle, b);
+    return b;
+}
+
+/* ---- vertex fetch and primitive assembly ---- */
+static float k_cur[16][4];             /* current (inline) attribute values for disabled arrays */
+static uint32_t k_prim;                /* NV097_SET_BEGIN_END op, 0 = outside begin/end */
+static KVertex *kv; static uint32_t kv_n, kv_cap;
+static uint32_t *ki; static uint32_t ki_n, ki_cap;
+static uint32_t *kelem; static uint32_t kelem_n, kelem_cap;   /* ARRAY_ELEMENT indices */
+
+static void *grow(void *p, uint32_t *cap, uint32_t need, size_t sz) {
+    if (need <= *cap) return p;
+    uint32_t c = *cap ? *cap : 1024;
+    while (c < need) c *= 2;
+    p = realloc(p, c * sz);
+    if (!p) rt_fatal("nv2a: out of memory");
+    *cap = c;
+    return p;
+}
+
+static float s16n(int16_t v) { float f = v / 32767.0f; return f < -1.f ? -1.f : f; }
+
+static void fetch_vertex(uint32_t index, KVertex *out) {
+    for (int a = 0; a < 16; a++) {
+        uint32_t fmt = KREG(K_VTX_FORMAT + a * 4), type = fmt & 0xF, size = (fmt >> 4) & 0xF, stride = fmt >> 8;
+        float *o = out->a[a];
+        if (!size) { memcpy(o, k_cur[a], 16); continue; }
+        uint32_t off = KREG(0x1720 + a * 4);
+        uint32_t base = nv2a_dma_base(KREG((off & 0x80000000u) ? K_DMA_VERTEX_B : K_DMA_VERTEX_A));
+        uint32_t p = (base + (off & 0x7FFFFFFF) + index * stride) & 0x03FFFFFF;
+        o[0] = o[1] = o[2] = 0; o[3] = 1;
+        switch (type) {
+        case 0:  /* UB_D3D: D3DCOLOR (B,G,R,A bytes) -> R,G,B,A */
+            o[0] = RD8(p + 2) / 255.f; o[1] = RD8(p + 1) / 255.f; o[2] = RD8(p) / 255.f; o[3] = RD8(p + 3) / 255.f;
+            if (size < 4) o[3] = 1;
+            break;
+        case 4:  /* UB_OGL */
+            for (uint32_t i = 0; i < size && i < 4; i++) o[i] = RD8(p + i) / 255.f;
+            break;
+        case 1:  /* S1: signed normalized short */
+            for (uint32_t i = 0; i < size && i < 4; i++) o[i] = s16n((int16_t)RD16(p + 2 * i));
+            break;
+        case 5:  /* S32K: short */
+            for (uint32_t i = 0; i < size && i < 4; i++) o[i] = (float)(int16_t)RD16(p + 2 * i);
+            break;
+        case 2:  /* F */
+            for (uint32_t i = 0; i < size && i < 4; i++) { uint32_t u = RD32(p + 4 * i); memcpy(&o[i], &u, 4); }
+            break;
+        case 6: { /* CMP: 11:11:10 signed normalized */
+            uint32_t v = RD32(p);
+            o[0] = ((int32_t)(v << 21) >> 21) / 1023.f;
+            o[1] = ((int32_t)(v << 10) >> 21) / 1023.f;
+            o[2] = ((int32_t)v >> 22) / 511.f;
+            break;
+        }
+        default: {
+            static int warned;
+            if (!warned++) LOG("[pb] vertex attribute %d: unknown type %u\n", a, type);
+            break;
+        }
+        }
+    }
+}
+
+/* Append indices for a primitive segment of n vertices starting at vertex b. */
+static void assemble(uint32_t prim, uint32_t b, uint32_t n) {
+    ki = grow(ki, &ki_cap, ki_n + n * 6 + 8, 4);
+    uint32_t *o = ki + ki_n;
+    switch (prim) {
+    case 1: case 2: case 5: for (uint32_t i = 0; i < n; i++) *o++ = b + i; break;          /* points, lines, tris */
+    case 3: case 4:                                                                       /* line loop / strip */
+        for (uint32_t i = 0; i + 1 < n; i++) { *o++ = b + i; *o++ = b + i + 1; }
+        if (prim == 3 && n > 2) { *o++ = b + n - 1; *o++ = b; }
+        break;
+    case 6:                                                                               /* triangle strip */
+        for (uint32_t i = 0; i + 2 < n; i++) {
+            if (i & 1) { *o++ = b + i + 1; *o++ = b + i; } else { *o++ = b + i; *o++ = b + i + 1; }
+            *o++ = b + i + 2;
+        }
+        break;
+    case 7: case 10:                                                                      /* fan, polygon */
+        for (uint32_t i = 1; i + 1 < n; i++) { *o++ = b; *o++ = b + i; *o++ = b + i + 1; }
+        break;
+    case 8:                                                                               /* quads */
+        for (uint32_t i = 0; i + 3 < n; i += 4) {
+            *o++ = b + i; *o++ = b + i + 1; *o++ = b + i + 2;
+            *o++ = b + i; *o++ = b + i + 2; *o++ = b + i + 3;
+        }
+        break;
+    case 9:                                                                               /* quad strip */
+        for (uint32_t i = 0; i + 3 < n; i += 2) {
+            *o++ = b + i; *o++ = b + i + 1; *o++ = b + i + 3;
+            *o++ = b + i; *o++ = b + i + 3; *o++ = b + i + 2;
+        }
+        break;
+    default: break;
+    }
+    ki_n = (uint32_t)(o - ki);
+}
+
+static void draw_arrays(uint32_t data) {
+    uint32_t start = data & 0xFFFFFF, n = (data >> 24) + 1;
+    kv = grow(kv, &kv_cap, kv_n + n, sizeof(KVertex));
+    uint32_t b = kv_n;
+    for (uint32_t i = 0; i < n; i++) fetch_vertex(start + i, &kv[kv_n++]);
+    assemble(k_prim, b, n);
+}
+
+static void end_primitive(void) {
+    if (kelem_n) {
+        kv = grow(kv, &kv_cap, kv_n + kelem_n, sizeof(KVertex));
+        uint32_t b = kv_n;
+        for (uint32_t i = 0; i < kelem_n; i++) fetch_vertex(kelem[i], &kv[kv_n++]);
+        assemble(k_prim, b, kelem_n);
+        kelem_n = 0;
+    }
+    if (ki_n) {
+        int topo = k_prim <= 1 ? KTOPO_POINTS : k_prim <= 4 ? KTOPO_LINES : KTOPO_TRIS;
+        gpu_draw(topo, kv, kv_n, ki, ki_n);
+    }
+    kv_n = ki_n = 0;
+}
+
+static void add_element(uint32_t index) {
+    kelem = grow(kelem, &kelem_cap, kelem_n + 1, 4);
+    kelem[kelem_n++] = index;
+}
+
+static void set_cur(int a, float x, float y, float z, float w) {
+    k_cur[a][0] = x; k_cur[a][1] = y; k_cur[a][2] = z; k_cur[a][3] = w;
+}
+static float u2f(uint32_t u) { float f; memcpy(&f, &u, 4); return f; }
+
+/* Inline vertex data methods that set "current" attribute values. */
+static void inline_attr(uint32_t method, uint32_t data) {
+    if (method >= 0x1A00 && method < 0x1B00) {                 /* SET_VERTEX_DATA4F_M[16][4] */
+        uint32_t a = (method - 0x1A00) >> 4, c = (method >> 2) & 3;
+        k_cur[a][c] = u2f(data);
+    } else if (method >= 0x1880 && method < 0x1900) {          /* SET_VERTEX_DATA2F_M[16][2] */
+        uint32_t a = (method - 0x1880) >> 3, c = (method >> 2) & 1;
+        k_cur[a][c] = u2f(data);
+        if (c == 1) { k_cur[a][2] = 0; k_cur[a][3] = 1; }
+    } else if (method >= 0x1940 && method < 0x1980) {          /* SET_VERTEX_DATA4UB[16] */
+        uint32_t a = (method - 0x1940) >> 2;
+        set_cur(a, (data & 0xFF) / 255.f, ((data >> 8) & 0xFF) / 255.f, ((data >> 16) & 0xFF) / 255.f, (data >> 24) / 255.f);
+    } else if (method >= 0x1900 && method < 0x1940) {          /* SET_VERTEX_DATA2S[16] */
+        uint32_t a = (method - 0x1900) >> 2;
+        set_cur(a, (float)(int16_t)data, (float)(int16_t)(data >> 16), 0, 1);
+    } else if (method == 0x156C) {                             /* SET_DIFFUSE_COLOR4UB (D3DCOLOR) */
+        set_cur(3, ((data >> 16) & 0xFF) / 255.f, ((data >> 8) & 0xFF) / 255.f, (data & 0xFF) / 255.f, (data >> 24) / 255.f);
+    } else if (method == 0x158C) {                             /* SET_SPECULAR_COLOR4UB */
+        set_cur(4, ((data >> 16) & 0xFF) / 255.f, ((data >> 8) & 0xFF) / 255.f, (data & 0xFF) / 255.f, (data >> 24) / 255.f);
+    } else if (method >= 0x1550 && method < 0x1560) {          /* SET_DIFFUSE_COLOR4F */
+        k_cur[3][(method >> 2) & 3] = u2f(data);
+    } else if (method >= 0x1570 && method < 0x1580) {          /* SET_SPECULAR_COLOR4F */
+        k_cur[4][(method >> 2) & 3] = u2f(data);
+    }
+}
+
+static int pb_frame = -1, pb_clears;   /* GT_PBFRAME=N: log methods between clear N and N+1 */
 
 static void pgraph_method(uint32_t subch, uint32_t method, uint32_t data) {
-    if (pb_log) LOG("[pb] sub%u %04X = %08X\n", subch, method, data);
+    if (pb_frame < 0) { const char *e = getenv("GT_PBFRAME"); pb_frame = e ? atoi(e) : 0; }
+    if (subch == 0 && method == 0x1D94) pb_clears++;
+    if (pb_log || (pb_frame && (pb_clears == pb_frame || subch != 0)))
+        LOG("[pb] sub%u %04X = %08X\n", subch, method, data);
     if (method == 0) { sub_class[subch] = data; return; }
     if (subch != 0) return;   /* subchannel 0 = Kelvin (3D) */
+    g_kreg[method >> 2] = data;
+    if (method >= 0x1500 && method < 0x1B00 && method != 0x17FC && method != 0x1800 && method != 0x1808 &&
+        method != 0x1810 && method != 0x1818 && (method < 0x1720 || method >= 0x17A0))
+        inline_attr(method, data);
     switch (method) {
+    case 0x17FC:                                                        /* SET_BEGIN_END */
+        if (data == 0) end_primitive();
+        else { kv_n = ki_n = kelem_n = 0; }
+        k_prim = data;
+        break;
+    case 0x1810: draw_arrays(data); break;                              /* DRAW_ARRAYS */
+    case 0x1800: add_element(data & 0xFFFF); add_element(data >> 16); break;   /* ARRAY_ELEMENT16 pair */
+    case 0x1808: add_element(data); break;                              /* ARRAY_ELEMENT32 */
+    case 0x1818: {                                                      /* INLINE_ARRAY */
+        static int warned;
+        if (!warned++) LOG("[pb] INLINE_ARRAY not implemented\n");
+        break;
+    }
+    case 0x1D94: gpu_clear(data); break;                                /* CLEAR_SURFACE */
+    case 0x012C:                                                        /* FLIP_INCREMENT_WRITE */
+        /* XDK Swap: 1D8C (scratch) holds the surface offset just completed */
+        gpu_flip((nv2a_dma_base(KREG(K_DMA_COLOR)) + KREG(K_ZSTENCIL_CLEAR)) & 0x03FFFFFF);
+        break;
     case 0x01A4: k_dma_semaphore = data; break;                         /* SET_CONTEXT_DMA_SEMAPHORE */
     case 0x1D6C: k_semaphore_offset = data; break;                      /* SET_SEMAPHORE_OFFSET */
     case 0x1D70: {                                                      /* BACK_END_WRITE_SEMAPHORE_RELEASE */
@@ -175,6 +372,7 @@ void mmio_write(uint32_t a, uint32_t v, int size) {
     }
     if (size == 4) WR32(a, v); else if (size == 2) WR16(a, (uint16_t)v); else WR8(a, (uint8_t)v);
     switch ((a - NV_BASE) & ~3u) {
+    case 0x600800: if (pb_frame > 0) LOG("[crtc] start %08X tid %lu\n", v, GetCurrentThreadId()); break;
     case NV_USER_PUT: pfifo_kick(v); break;
     case NV_USER_GET: pb_get = v & 0x03FFFFFC; break;
     default: break;

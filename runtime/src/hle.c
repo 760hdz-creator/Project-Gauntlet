@@ -105,6 +105,7 @@ void x86_hle(X86Context *c, uint32_t va) {
         return;
     }
     default:
+        if (dsound_hle(c, va)) return;
         rt_fatal("no HLE implementation for %08X", va);
     }
 }

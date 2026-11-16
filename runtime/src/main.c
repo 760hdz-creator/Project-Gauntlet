@@ -26,6 +26,7 @@ void x86_unimpl(X86Context *c, uint32_t va, const char *what) {
 
 void x86_call_indirect(X86Context *c, uint32_t va) {
     if (kernel_call(c, va)) return;
+    if (dsound_vcall(c, va)) return;
     GuestFunc f = lookup(va);
     if (!f) {
         if (g_missed) { fprintf(g_missed, "%X\n", va); fflush(g_missed); }

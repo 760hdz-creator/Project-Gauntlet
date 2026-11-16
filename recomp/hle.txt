@@ -12,3 +12,24 @@
 
 # XAPI
 B1B72 GetTickCount
+
+# DSOUND C API (XDK 4242). Matched to PDB section 5 by order and stdcall arg bytes; every other
+# DSOUND function is lifted as a fatal HLE stub (recomp/lift.py). Implemented in runtime/src/dsound.c.
+D50F5 IDirectSound_AddRef
+D510B IDirectSound_Release
+D5121 IDirectSoundBuffer_AddRef
+D5A0E IDirectSound_GetTime
+D5A2A IDirectSoundBuffer_SetVolume
+D5A46 IDirectSoundBuffer_SetMixBinVolumes
+D5A62 IDirectSoundBuffer_Play
+D5A86 IDirectSoundBuffer_Stop
+D5A9E IDirectSoundBuffer_GetStatus
+D5ABA IDirectSoundBuffer_GetCurrentPosition
+D5ADA IDirectSoundStream_Pause
+D5ADF DirectSoundDoWork
+D5DE7 IDirectSoundBuffer_SetFormat
+D5E03 IDirectSoundBuffer_SetFrequency
+D6295 IDirectSoundBuffer_SetBufferData
+D65AB IDirectSound_CreateSoundBuffer
+D6765 DirectSoundCreate
+D67AC DirectSoundCreateStream

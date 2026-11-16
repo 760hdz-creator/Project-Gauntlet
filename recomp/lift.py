@@ -44,6 +44,10 @@ COND_ALIAS = {"c": "b", "nae": "b", "nc": "ae", "nb": "ae", "z": "e", "nz": "ne"
 
 IO_RANGES = [(0x000C0A00, 0x000D07E0),   # D3D section (NV2A registers)
              (0x000D3940, 0x000DBD94)]   # DSOUND section (APU registers)
+DSOUND_RANGE = IO_RANGES[1]
+# DSOUND functions that stay lifted: CRT static initializers (table 0x1061DC..0x1070D0) that only
+# store constants into DSOUND globals.
+DSOUND_LIFT = {0xDA2BB, 0xDA2C6}
 
 
 HLE = {}  # va -> name: functions implemented by the runtime instead of lifted
@@ -361,9 +365,12 @@ class Emitter:
     def run(self):
         f = self.f
         name = f"f_{f.start:08X}"
-        if f.start in HLE:
+        if f.start in HLE or (DSOUND_RANGE[0] <= f.start < DSOUND_RANGE[1] and f.start not in DSOUND_LIFT):
             # Replaced by a host implementation (runtime dispatches on the VA); see recomp/hle.txt.
-            return f"/* HLE: {HLE[f.start]} */\nvoid {name}(X86Context *c) {{ x86_hle(c, 0x{f.start:X}u); }}"
+            # DSOUND is HLE'd at the API level: a DSOUND function the runtime does not implement
+            # fails loudly instead of running the library on fake objects.
+            return (f"/* HLE: {HLE.get(f.start, 'DSOUND internal')} */\n"
+                    f"void {name}(X86Context *c) {{ x86_hle(c, 0x{f.start:X}u); }}")
         self.out.append(f"void {name}(X86Context *c) {{")
         self.emit("uint32_t eax=c->eax, ecx=c->ecx, edx=c->edx, ebx=c->ebx, esp=c->esp, ebp=c->ebp, esi=c->esi, edi=c->edi;")
         self.emit("uint8_t cf=0, zf=0, sf=0, of=0, pf=0; (void)pf;")
@@ -542,6 +549,27 @@ class Emitter:
                 f"c->xmm[{self.vreg(ins, ops[1])[1]}].f[0]"
             fn = "truncf" if m == "cvttss2si" else "nearbyintf"
             e(self.write(ins, ops[0], f"(uint32_t)(int32_t){fn}({src})", 4))
+            return
+        if m in ("cvtps2pi", "cvttps2pi"):
+            # two packed floats (xmm low qword or m64) -> two int32 in an MMX register
+            kind, d = self.vreg(ins, ops[0])
+            src = self.src64(ins, ops[1])
+            fn = "x86_cvtf2i_trunc" if m == "cvttps2pi" else "x86_cvtf2i_near"
+            e(f"{{ uint64_t t_ = {src}; float a_, b_; uint32_t lo_ = (uint32_t)t_, hi_ = (uint32_t)(t_ >> 32); "
+              f"memcpy(&a_, &lo_, 4); memcpy(&b_, &hi_, 4); "
+              f"c->mm[{d}] = (uint64_t){fn}(a_) | ((uint64_t){fn}(b_) << 32); }}")
+            return
+        if m == "cvtpi2ps":
+            kind, d = self.vreg(ins, ops[0])
+            e(f"{{ uint64_t t_ = {self.src64(ins, ops[1])}; c->xmm[{d}].f[0] = (float)(int32_t)t_; "
+              f"c->xmm[{d}].f[1] = (float)(int32_t)(t_ >> 32); }}")
+            return
+        if m == "pshufw":
+            kind, d = self.vreg(ins, ops[0])
+            imm = ops[2].imm & 0xFF
+            e(f"{{ uint64_t t_ = {self.src64(ins, ops[1])}; c->mm[{d}] = "
+              + " | ".join(f"(((t_ >> {16 * ((imm >> (2 * i)) & 3)}) & 0xFFFFull) << {16 * i})" for i in range(4))
+              + "; }")
             return
         if m == "xlatb":
             e("eax = (eax & 0xFFFFFF00u) | RD8(ebx + (uint8_t)eax);")

@@ -145,6 +145,9 @@ uint32_t mmio_read(uint32_t a, int size) {
         case 0x002400: v = *reg(off) | 0x10; break;       /* PFIFO_RUNOUT_STATUS: empty */
         case 0x003214: v = *reg(off) | 0x10; break;       /* CACHE1_STATUS: empty */
         case 0x003220: v = *reg(off) & ~0x10u; break;     /* CACHE1_DMA_PUSH: status idle */
+        /* PVIDEO overlay (WMV playback): every queued buffer is consumed at once. The overlay
+         * registers (0x8900+) keep their values for the host renderer. */
+        case 0x008700: v = 0; break;                      /* PVIDEO_BUFFER: none in use */
         default: v = *reg(off); break;
         }
         touch(a, 0, v);

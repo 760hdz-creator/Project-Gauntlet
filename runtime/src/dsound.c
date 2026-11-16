@@ -1,0 +1,478 @@
+/* DSOUND (XDK 4242) HLE at the C-API level.
+ *
+ * The game calls DSOUND only through the C wrappers listed in recomp/hle.txt (IDirectSound_*,
+ * IDirectSoundBuffer_*, DirectSoundCreate*, DirectSoundDoWork) and through the vtable of the
+ * IDirectSoundStream objects it creates (the WMV player). Every other DSOUND function is lifted as
+ * an HLE stub that fails loudly (recomp/lift.py), so the library never runs on our fake objects.
+ *
+ * Objects are small guest allocations; the guest only passes their addresses back to us, except the
+ * stream, whose vtable points at HLE sentinels (HSENTINEL_BASE + slot*4, dispatched from
+ * x86_call_indirect). Refcounts are cosmetic and objects are never freed.
+ *
+ * A host mixer thread owns the play cursors: buffers advance only as audio is mixed, so status and
+ * cursor queries move in real time. Output is waveOut 48 kHz stereo s16; without a device (or with
+ * GT_NOAUDIO=1) the mixer still runs, paced by Sleep, and discards its output. GT_WAVDUMP=<file>
+ * writes the mixed output as raw s16 stereo 48 kHz. GT_DSLOG=1 traces IDirectSoundBuffer calls.
+ */
+#include <windows.h>
+#include <mmsystem.h>
+#include <math.h>
+#include "rt.h"
+
+#define OUT_RATE    48000
+#define OUT_FRAMES  960          /* 20 ms per waveOut buffer */
+#define OUT_BUFS    4
+
+#define MAX_BUFFERS 512
+#define DSBSTATUS_PLAYING 0x1
+#define DSBSTATUS_LOOPING 0x4
+#define DSBPLAY_LOOPING   0x1
+#define DSBPLAY_FROMSTART 0x2
+#define WAVE_FORMAT_PCM_       1
+#define WAVE_FORMAT_XBOX_ADPCM 0x69
+#define XMEDIAPACKET_STATUS_SUCCESS 0
+
+typedef struct {
+    uint16_t tag, channels, block_align, bits;
+    uint32_t rate;
+} Fmt;
+
+typedef struct {
+    uint32_t guest;              /* object address the guest holds */
+    Fmt fmt;
+    uint32_t data, bytes;        /* guest audio data */
+    uint32_t freq;               /* 0 = fmt.rate */
+    int32_t volume;              /* hundredths of a dB, <= 0 */
+    int playing, looping;
+    double pos;                  /* in frames */
+    int32_t adpcm_block;         /* decoded block cache */
+    int16_t adpcm[2 * 65];
+} Voice;
+
+static CRITICAL_SECTION g_lock;
+static Voice g_voices[MAX_BUFFERS];
+static int g_nvoices;
+static uint32_t g_ds_obj;        /* the IDirectSound the game holds */
+
+/* ---- stream (one WMV soundtrack at a time) ---- */
+#define FIFO_BYTES (4u << 20)
+typedef struct {
+    uint32_t guest;
+    Fmt fmt;
+    int paused;
+    uint8_t *fifo;               /* raw packet bytes in fmt */
+    uint32_t rd, wr;             /* byte counters, wrap at FIFO_BYTES */
+    double frac;                 /* fractional source frame */
+} Stream;
+static Stream g_stream;
+static uint32_t g_stream_vtbl;
+
+#define STREAM_SLOTS 32
+
+/* ------------------------------------------------------------------ helpers */
+
+static void ret_std(X86Context *c, int nargs, uint32_t eax) {
+    c->eax = eax;
+    c->esp += 4 + 4 * nargs;
+}
+
+static void read_fmt(uint32_t wfx, Fmt *f) {
+    if (!wfx) { f->tag = WAVE_FORMAT_PCM_; f->channels = 2; f->rate = 48000; f->bits = 16; f->block_align = 4; return; }
+    f->tag = RD16(wfx);
+    f->channels = RD16(wfx + 2);
+    f->rate = RD32(wfx + 4);
+    f->block_align = RD16(wfx + 12);
+    f->bits = RD16(wfx + 14);
+    if (f->channels < 1) f->channels = 1;
+    if (f->channels > 2) f->channels = 2;   /* 6-channel would need mix bins: not used by the game so far */
+    if (!f->block_align) f->block_align = (uint16_t)(f->channels * f->bits / 8);
+}
+
+static uint32_t fmt_frames(const Fmt *f, uint32_t bytes) {
+    if (f->tag == WAVE_FORMAT_XBOX_ADPCM) return bytes / (36u * f->channels) * 64u;
+    return f->block_align ? bytes / f->block_align : 0;
+}
+
+static uint32_t frames_to_bytes(const Fmt *f, uint32_t frames) {
+    if (f->tag == WAVE_FORMAT_XBOX_ADPCM) return frames / 64u * 36u * f->channels;
+    return frames * f->block_align;
+}
+
+static Voice *voice_of(uint32_t guest) {
+    for (int i = 0; i < g_nvoices; i++)
+        if (g_voices[i].guest == guest) return &g_voices[i];
+    rt_fatal("DSOUND: unknown buffer object %08X", guest);
+}
+
+/* Xbox ADPCM = IMA ADPCM, 36-byte blocks per channel: 4-byte header (sample, step index) then
+ * 64 nibble samples interleaved in 4-byte words per channel. The header sample is not output
+ * (64 frames per block), matching DSOUND's own frame accounting. */
+static const int ima_index[16] = { -1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8 };
+static const int ima_step[89] = {
+    7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73, 80, 88, 97,
+    107, 118, 130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449, 494, 544, 598, 658, 724, 796,
+    876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066, 2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871,
+    5358, 5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899, 15289, 16818, 18500, 20350, 22385, 24623,
+    27086, 29794, 32767 };
+
+static void adpcm_decode_block(uint32_t src, int ch, int16_t *out /* [64*ch] interleaved */) {
+    for (int c = 0; c < ch; c++) {
+        int pred = (int16_t)RD16(src + 4 * c);
+        int idx = RD8(src + 4 * c + 2);
+        if (idx > 88) idx = 88;
+        int n = 0;
+        for (int word = 0; word < 8; word++) {
+            uint32_t w = RD32(src + 4 * ch + (word * ch + c) * 4);
+            for (int k = 0; k < 8; k++, w >>= 4) {
+                int nib = w & 15, step = ima_step[idx];
+                int diff = step >> 3;
+                if (nib & 1) diff += step >> 2;
+                if (nib & 2) diff += step >> 1;
+                if (nib & 4) diff += step;
+                pred += (nib & 8) ? -diff : diff;
+                if (pred > 32767) pred = 32767;
+                if (pred < -32768) pred = -32768;
+                idx += ima_index[nib];
+                if (idx < 0) idx = 0;
+                if (idx > 88) idx = 88;
+                out[n++ * ch + c] = (int16_t)pred;
+            }
+        }
+    }
+}
+
+/* One source frame as floats in [-1, 1]. */
+static void voice_frame(Voice *v, uint32_t frame, float *l, float *r) {
+    const Fmt *f = &v->fmt;
+    float a, b;
+    if (f->tag == WAVE_FORMAT_XBOX_ADPCM) {
+        int32_t blk = (int32_t)(frame / 64);
+        if (blk != v->adpcm_block) {
+            adpcm_decode_block(v->data + (uint32_t)blk * 36u * f->channels, f->channels, v->adpcm);
+            v->adpcm_block = blk;
+        }
+        int k = (int)(frame % 64) * f->channels;
+        a = v->adpcm[k] / 32768.0f;
+        b = f->channels == 2 ? v->adpcm[k + 1] / 32768.0f : a;
+    } else {
+        uint32_t p = v->data + frame * f->block_align;
+        if (f->bits == 8) {
+            a = ((int)RD8(p) - 128) / 128.0f;
+            b = f->channels == 2 ? ((int)RD8(p + 1) - 128) / 128.0f : a;
+        } else {
+            a = (int16_t)RD16(p) / 32768.0f;
+            b = f->channels == 2 ? (int16_t)RD16(p + 2) / 32768.0f : a;
+        }
+    }
+    *l = a; *r = b;
+}
+
+static float db_gain(int32_t vol) {
+    if (vol >= 0) return 1.0f;
+    if (vol <= -10000) return 0.0f;
+    return powf(10.0f, vol / 2000.0f);
+}
+
+/* ------------------------------------------------------------------ mixer */
+
+static void mix_voice(Voice *v, float *out, int n) {
+    uint32_t frames = fmt_frames(&v->fmt, v->bytes);
+    if (!v->data || !frames) { v->playing = 0; return; }
+    uint32_t rate = v->freq ? v->freq : v->fmt.rate;
+    double step = (double)rate / OUT_RATE;
+    float g = db_gain(v->volume);
+    for (int i = 0; i < n; i++) {
+        if (v->pos >= frames) {
+            if (!v->looping) { v->playing = 0; v->pos = 0; return; }
+            v->pos = fmod(v->pos, frames);
+        }
+        float l, r;
+        voice_frame(v, (uint32_t)v->pos, &l, &r);
+        out[2 * i] += l * g;
+        out[2 * i + 1] += r * g;
+        v->pos += step;
+    }
+}
+
+static void mix_stream(float *out, int n) {
+    Stream *s = &g_stream;
+    if (!s->guest || s->paused || !s->fifo) return;
+    const Fmt *f = &s->fmt;
+    if (f->tag != WAVE_FORMAT_PCM_ || !f->block_align) return;
+    double step = (double)f->rate / OUT_RATE;
+    for (int i = 0; i < n; i++) {
+        if (s->wr - s->rd < f->block_align) return;   /* underrun */
+        const uint8_t *p = s->fifo + (s->rd % FIFO_BYTES);
+        float l, r;
+        if (f->bits == 8) { l = (p[0] - 128) / 128.0f; r = f->channels == 2 ? (p[1] - 128) / 128.0f : l; }
+        else {
+            l = *(const int16_t *)p / 32768.0f;
+            r = f->channels == 2 ? *(const int16_t *)(p + 2) / 32768.0f : l;
+        }
+        out[2 * i] += l;
+        out[2 * i + 1] += r;
+        s->frac += step;
+        while (s->frac >= 1.0) { s->frac -= 1.0; s->rd += f->block_align; }
+    }
+}
+
+static void mix(int16_t *dst, int n) {
+    static float acc[2 * OUT_FRAMES];
+    memset(acc, 0, sizeof(float) * 2 * n);
+    EnterCriticalSection(&g_lock);
+    for (int i = 0; i < g_nvoices; i++)
+        if (g_voices[i].playing) mix_voice(&g_voices[i], acc, n);
+    mix_stream(acc, n);
+    LeaveCriticalSection(&g_lock);
+    for (int i = 0; i < 2 * n; i++) {
+        float x = acc[i] * 32767.0f;
+        dst[i] = (int16_t)(x > 32767.0f ? 32767 : x < -32768.0f ? -32768 : x);
+    }
+    /* GT_WAVDUMP=<file>: raw s16 stereo 48 kHz copy of the mixer output, for checking audio offline */
+    static FILE *dump;
+    static int dump_init;
+    if (!dump_init++) { const char *p = getenv("GT_WAVDUMP"); if (p && *p) dump = fopen(p, "wb"); }
+    if (dump) fwrite(dst, 4, (size_t)n, dump);
+}
+
+static DWORD WINAPI mixer_thread(void *arg) {
+    (void)arg;
+    static int16_t pcm[OUT_BUFS][2 * OUT_FRAMES];
+    HWAVEOUT wo = NULL;
+    HANDLE ev = CreateEventA(NULL, FALSE, FALSE, NULL);
+    const char *no = getenv("GT_NOAUDIO");
+    if (!(no && *no == '1')) {
+        WAVEFORMATEX wf = { WAVE_FORMAT_PCM, 2, OUT_RATE, OUT_RATE * 4, 4, 16, 0 };
+        if (waveOutOpen(&wo, WAVE_MAPPER, &wf, (DWORD_PTR)ev, 0, CALLBACK_EVENT) != MMSYSERR_NOERROR) wo = NULL;
+    }
+    LOG("[dsound] mixer: %s\n", wo ? "waveOut 48 kHz" : "no output device (silent, paced)");
+    if (!wo) {
+        for (;;) { mix(pcm[0], OUT_FRAMES); Sleep(OUT_FRAMES * 1000 / OUT_RATE); }
+    }
+    WAVEHDR hdr[OUT_BUFS];
+    memset(hdr, 0, sizeof hdr);
+    for (int i = 0; i < OUT_BUFS; i++) {
+        hdr[i].lpData = (LPSTR)pcm[i];
+        hdr[i].dwBufferLength = sizeof pcm[i];
+        waveOutPrepareHeader(wo, &hdr[i], sizeof hdr[i]);
+        mix(pcm[i], OUT_FRAMES);
+        waveOutWrite(wo, &hdr[i], sizeof hdr[i]);
+    }
+    for (;;) {
+        WaitForSingleObject(ev, 100);
+        for (int i = 0; i < OUT_BUFS; i++) {
+            if (!(hdr[i].dwFlags & WHDR_DONE)) continue;
+            mix(pcm[i], OUT_FRAMES);
+            waveOutWrite(wo, &hdr[i], sizeof hdr[i]);
+        }
+    }
+}
+
+static void dsound_init(void) {
+    static int done;
+    if (done++) return;
+    InitializeCriticalSection(&g_lock);
+    /* stream vtable: one sentinel per slot */
+    g_stream_vtbl = karea_alloc(4 * STREAM_SLOTS);
+    for (int i = 0; i < STREAM_SLOTS; i++) WR32(g_stream_vtbl + 4 * i, HSENTINEL_BASE + 4 * i);
+    CreateThread(NULL, 0, mixer_thread, NULL, 0, NULL);
+}
+
+/* ------------------------------------------------------------------ stream vtable */
+
+int dsound_vcall(X86Context *c, uint32_t va) {
+    if (va < HSENTINEL_BASE || va >= HSENTINEL_BASE + 4 * STREAM_SLOTS || (va & 3)) return 0;
+    int slot = (int)(va - HSENTINEL_BASE) / 4;
+    sched_maybe_yield();
+    uint32_t self = ARG(0);
+    if (self != g_stream.guest) rt_fatal("DSOUND stream method %d on unknown object %08X", slot, self);
+    switch (slot) {
+    case 0: /* ULONG AddRef(this) */
+    case 1: /* ULONG Release(this): the stream stays alive (cosmetic refcount), playback stops */
+        if (slot == 1) {
+            EnterCriticalSection(&g_lock);
+            g_stream.rd = g_stream.wr;
+            LeaveCriticalSection(&g_lock);
+        }
+        ret_std(c, 1, 1);
+        return 1;
+    case 2: { /* HRESULT GetInfo(this, XMEDIAINFO *): dwFlags, dwInputSize, dwOutputSize, dwMaxLookahead */
+        uint32_t p = ARG(1);
+        if (p) { WR32(p, 0); WR32(p + 4, g_stream.fmt.block_align); WR32(p + 8, 0); WR32(p + 12, 0); }
+        ret_std(c, 2, 0);
+        return 1;
+    }
+    case 4: { /* HRESULT Process(this, XMEDIAPACKET *in, XMEDIAPACKET *out) */
+        uint32_t pk = ARG(1);
+        if (pk) {
+            uint32_t buf = RD32(pk), size = RD32(pk + 4), pdone = RD32(pk + 8), pstat = RD32(pk + 12);
+            uint32_t evh = RD32(pk + 16);
+            EnterCriticalSection(&g_lock);
+            Stream *s = &g_stream;
+            if (s->wr - s->rd + size > FIFO_BYTES) s->rd = s->wr + size - FIFO_BYTES;   /* overflow: drop oldest */
+            for (uint32_t i = 0; i < size; i++) s->fifo[(s->wr + i) % FIFO_BYTES] = RD8(buf + i);
+            s->wr += size;
+            LeaveCriticalSection(&g_lock);
+            if (pdone) WR32(pdone, size);
+            if (pstat) WR32(pstat, XMEDIAPACKET_STATUS_SUCCESS);
+            if (evh) { uint32_t ev = handle_object(evh); if (ev) WR32(ev + 4, 1); }
+        }
+        ret_std(c, 3, 0);
+        return 1;
+    }
+    case 5: /* HRESULT Discontinuity(this) */
+        ret_std(c, 1, 0);
+        return 1;
+    case 6: /* HRESULT Flush(this) */
+        EnterCriticalSection(&g_lock);
+        g_stream.rd = g_stream.wr;
+        LeaveCriticalSection(&g_lock);
+        ret_std(c, 1, 0);
+        return 1;
+    default:
+        rt_fatal("DSOUND stream vtable slot %d (+0x%X) not implemented (return %08X)", slot, slot * 4, RD32(c->esp));
+    }
+}
+
+/* ------------------------------------------------------------------ C API */
+
+int dsound_hle(X86Context *c, uint32_t va) {
+    switch (va) {
+    case 0xD6765: { /* HRESULT DirectSoundCreate(LPGUID, LPDIRECTSOUND *, LPUNKNOWN) */
+        dsound_init();
+        if (!g_ds_obj) g_ds_obj = mem_alloc(16, 16);
+        WR32(ARG(1), g_ds_obj);
+        LOG("[dsound] DirectSoundCreate -> %08X\n", g_ds_obj);
+        ret_std(c, 3, 0);
+        return 1;
+    }
+    case 0xD50F5: /* ULONG IDirectSound_AddRef(this) */
+    case 0xD510B: /* ULONG IDirectSound_Release(this) */
+    case 0xD5121: /* ULONG IDirectSoundBuffer_AddRef(this) */
+        ret_std(c, 1, 1);
+        return 1;
+    case 0xD5ADF: /* VOID DirectSoundDoWork(void) */
+        c->esp += 4;
+        return 1;
+    case 0xD5A0E: { /* HRESULT IDirectSound_GetTime(this, REFERENCE_TIME *) */
+        uint32_t p = ARG(1);
+        if (p) WR64(p, sched_now_100ns());
+        ret_std(c, 2, 0);
+        return 1;
+    }
+    case 0xD65AB: { /* HRESULT IDirectSound_CreateSoundBuffer(this, LPCDSBUFFERDESC, LPDIRECTSOUNDBUFFER *, LPUNKNOWN) */
+        dsound_init();
+        uint32_t d = ARG(1);
+        uint32_t flags = RD32(d + 4), bytes = RD32(d + 8), wfx = RD32(d + 12);
+        if (g_nvoices >= MAX_BUFFERS) rt_fatal("DSOUND: more than %d buffers", MAX_BUFFERS);
+        EnterCriticalSection(&g_lock);
+        Voice *v = &g_voices[g_nvoices];
+        memset(v, 0, sizeof *v);
+        v->guest = mem_alloc(0x20, 16);
+        read_fmt(wfx, &v->fmt);
+        v->adpcm_block = -1;
+        if (bytes) { v->data = mem_alloc(bytes, 16); v->bytes = bytes; }
+        g_nvoices++;
+        LeaveCriticalSection(&g_lock);
+        if (g_log_kernel || g_nvoices <= 4)
+            LOG("[dsound] CreateSoundBuffer flags %X bytes %X fmt %X ch %u rate %u bits %u -> %08X\n", flags, bytes,
+                v->fmt.tag, v->fmt.channels, v->fmt.rate, v->fmt.bits, v->guest);
+        WR32(ARG(2), v->guest);
+        ret_std(c, 4, 0);
+        return 1;
+    }
+    case 0xD67AC: { /* HRESULT DirectSoundCreateStream(LPCDSSTREAMDESC, LPDIRECTSOUNDSTREAM *) */
+        dsound_init();
+        uint32_t d = ARG(0);
+        uint32_t flags = RD32(d), maxpk = RD32(d + 4), wfx = RD32(d + 8), cb = RD32(d + 12);
+        if (cb) rt_fatal("DSOUND: stream completion callback %08X not implemented", cb);
+        EnterCriticalSection(&g_lock);
+        Stream *s = &g_stream;
+        if (!s->guest) {
+            s->guest = mem_alloc(0x20, 16);
+            WR32(s->guest, g_stream_vtbl);
+            s->fifo = malloc(FIFO_BYTES);
+        }
+        read_fmt(wfx, &s->fmt);
+        s->rd = s->wr = 0;
+        s->frac = 0;
+        s->paused = 0;
+        LeaveCriticalSection(&g_lock);
+        LOG("[dsound] CreateStream flags %X packets %u fmt %X ch %u rate %u bits %u -> %08X\n", flags, maxpk,
+            s->fmt.tag, s->fmt.channels, s->fmt.rate, s->fmt.bits, s->guest);
+        WR32(ARG(1), s->guest);
+        ret_std(c, 2, 0);
+        return 1;
+    }
+    case 0xD5ADA: { /* HRESULT IDirectSoundStream_Pause(this, DWORD dwPause): 0 resume, 1 pause */
+        if (ARG(0) != g_stream.guest) rt_fatal("DSOUND: Pause on unknown stream %08X", ARG(0));
+        EnterCriticalSection(&g_lock);
+        g_stream.paused = ARG(1) != 0;
+        LeaveCriticalSection(&g_lock);
+        ret_std(c, 2, 0);
+        return 1;
+    }
+    }
+
+    /* IDirectSoundBuffer_* */
+    int nargs;
+    switch (va) {
+    case 0xD5A2A: case 0xD5A46: case 0xD5A9E: case 0xD5DE7: case 0xD5E03: nargs = 2; break;
+    case 0xD5ABA: case 0xD6295: nargs = 3; break;
+    case 0xD5A62: nargs = 4; break;
+    case 0xD5A86: nargs = 1; break;
+    default: return 0;
+    }
+    static int dslog = -1;
+    if (dslog < 0) { const char *e = getenv("GT_DSLOG"); dslog = e && *e == '1'; }
+    if (dslog) LOG("[dsound] %05X(%08X, %08X, %08X, %08X)\n", va, ARG(0), ARG(1), ARG(2), ARG(3));
+    EnterCriticalSection(&g_lock);
+    Voice *v = voice_of(ARG(0));
+    uint32_t eax = 0;
+    switch (va) {
+    case 0xD5A2A: /* SetVolume(this, LONG) */
+        v->volume = (int32_t)ARG(1);
+        break;
+    case 0xD5A46: /* SetMixBinVolumes(this, LPCDSMIXBINS): mix bins are not modeled */
+        break;
+    case 0xD5A62: /* Play(this, reserved, reserved, DWORD flags) */
+        v->looping = (ARG(3) & DSBPLAY_LOOPING) != 0;
+        if (ARG(3) & DSBPLAY_FROMSTART) v->pos = 0;
+        v->playing = 1;
+        break;
+    case 0xD5A86: /* Stop(this) */
+        v->playing = 0;
+        break;
+    case 0xD5A9E: { /* GetStatus(this, LPDWORD) */
+        uint32_t st = v->playing ? DSBSTATUS_PLAYING | (v->looping ? DSBSTATUS_LOOPING : 0) : 0;
+        if (ARG(1)) WR32(ARG(1), st);
+        break;
+    }
+    case 0xD5ABA: { /* GetCurrentPosition(this, LPDWORD play, LPDWORD write) */
+        uint32_t play = frames_to_bytes(&v->fmt, (uint32_t)v->pos);
+        uint32_t lead = frames_to_bytes(&v->fmt, (v->freq ? v->freq : v->fmt.rate) / 100 + 64);   /* ~10 ms */
+        uint32_t write = v->bytes ? (play + lead) % v->bytes : 0;
+        if (ARG(1)) WR32(ARG(1), play);
+        if (ARG(2)) WR32(ARG(2), write);
+        break;
+    }
+    case 0xD5DE7: /* SetFormat(this, LPCWAVEFORMATEX) */
+        read_fmt(ARG(1), &v->fmt);
+        v->adpcm_block = -1;
+        if (dslog) LOG("[dsound]   fmt %X ch %u rate %u bits %u align %u\n", v->fmt.tag, v->fmt.channels, v->fmt.rate,
+                       v->fmt.bits, v->fmt.block_align);
+        break;
+    case 0xD5E03: /* SetFrequency(this, DWORD): 0 = format rate */
+        v->freq = ARG(1);
+        break;
+    case 0xD6295: /* SetBufferData(this, LPVOID, DWORD bytes) */
+        v->data = ARG(1);
+        v->bytes = ARG(2);
+        v->pos = 0;
+        v->adpcm_block = -1;
+        break;
+    }
+    LeaveCriticalSection(&g_lock);
+    ret_std(c, nargs, eax);
+    return 1;
+}

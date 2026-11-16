@@ -68,9 +68,19 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   - BOOT STATUS: models and textures load (sony/objects.ps2, textures.ps2). DSOUND init polls the AC97 (FEC00130)
     and then crashes on a DEADBEEF object (f_000D50F5, called from f_0002E5C0). Register-level APU emulation is a dead end.
 
+- 2026-11-16: DSOUND HLE at the C-API level (`runtime/src/dsound.c`, entries in `recomp/hle.txt`).
+  - 18 wrappers matched to PDB section 5 by order + stdcall arg bytes (IDirectSound_* adjust -8, IDirectSoundBuffer_* -0x1C).
+    The lifter turns every other DSOUND function into a fatal HLE stub, except CRT initializers DA2BB/DA2C6 (DSOUND_LIFT).
+  - Stream objects (WMV player) have a guest vtable of sentinels HSENTINEL_BASE 0x8FF80000+slot*4, dispatched in
+    x86_call_indirect: AddRef/Release/GetInfo/Process/Discontinuity/Flush. Packets complete at once into a host FIFO.
+  - Host mixer thread (waveOut 48 kHz) owns play cursors; PCM 8/16 + Xbox ADPCM (tag 0x69, 36-byte blocks, 64 frames).
+    Play flags: LOOPING 1, FROMSTART 2. Env: GT_NOAUDIO=1, GT_WAVDUMP=<raw s16 file>, GT_DSLOG=1.
+  - Lifter: cvtps2pi/cvttps2pi/cvtpi2ps/pshufw. nv2a: PVIDEO_BUFFER (0x8700) reads 0 (overlay idle).
+  - BOOT STATUS: midway/opening/title2 movies play with audio (WAVDUMP verified), attract mode loads levels, select
+    screen banks (*.vbk), SFX buffers play (ADPCM mono). No crash in 150 s. Nothing is displayed yet (no renderer).
+    Remaining unimplemented lift sites: segment mov 9, enter 4, fnsave/frstor. `in` port 0x80C0 polled (logged, returns 0).
+
 ## Next
-1. DSOUND HLE at the API level: find the DirectSoundCreate / CreateSoundBuffer / CreateSoundStream / IDirectSound*
-   entry points the game calls (32 direct .text->DSOUND call sites; f_0002E5C0 is one caller) and map PDB DSOUND
-   names (PDB section 5 differs in size, so match by signature). Return objects with stub behavior, then add a mixer.
-2. Host renderer for the Kelvin methods (window and swapchain first, then Present/flip on vblank).
-3. Oracle on non-leaf functions: 1563 pass; the remaining fails are unicorn NaN/fyl2x artifacts.
+1. Host renderer for the Kelvin methods (window and swapchain first, then Present/flip on vblank).
+2. Oracle on non-leaf functions: 1563 pass; the remaining fails are unicorn NaN/fyl2x artifacts.
+3. Overlay (PVIDEO 0x8900+ regs) display for WMV frames in the renderer; linear resampling in the mixer.

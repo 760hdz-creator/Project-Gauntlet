@@ -12,6 +12,7 @@
 #define KAREA_BASE      0x8F000000u   /* kernel data exports, KPCRs, kernel objects */
 #define KAREA_SIZE      0x00400000u
 #define KSENTINEL_BASE  0x8FF00000u   /* kernel function "addresses": base + ordinal*4 */
+#define HSENTINEL_BASE  0x8FF80000u   /* HLE object vtable entries (dsound.c): base + slot*4 */
 #define THREAD_EXIT_VA  0x8FFFF000u   /* return address of a guest thread's start routine */
 #define HW_BASE         0xFD000000u   /* NV2A / APU / other MMIO: dummy RAM for now */
 #define HW_SIZE         0x03000000u
@@ -64,6 +65,10 @@ uint32_t handle_new(int kind, uint32_t obj, void *host);
 Handle *handle_get(uint32_t h);
 uint32_t handle_object(uint32_t h);
 typedef uint32_t (*KHandler)(X86Context *c);
+
+/* DSOUND HLE (dsound.c) */
+int dsound_hle(X86Context *c, uint32_t va);          /* 1 if va is a DSOUND C-API entry */
+int dsound_vcall(X86Context *c, uint32_t va);        /* 1 if va is a DSOUND object vtable sentinel */
 
 /* NV2A (nv2a.c) */
 void nv2a_vblank(void);                              /* called at 60 Hz by kernel_poll */

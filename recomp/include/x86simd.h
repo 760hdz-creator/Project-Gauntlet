@@ -109,3 +109,11 @@ static inline void sse_shufps(X128 *d, X128 s, unsigned imm) {
 X128_LANES(sqrtps, sqrtf(s.f[i]))
 X128_LANES(rcpps, 1.0f / s.f[i])
 X128_LANES(rsqrtps, 1.0f / sqrtf(s.f[i]))
+
+/* float -> int32 as SSE does it: out of range or NaN gives the "integer indefinite" 0x80000000. */
+static inline uint32_t x86_cvtf2i_trunc(float f) {
+    return (f >= -2147483648.0f && f < 2147483648.0f) ? (uint32_t)(int32_t)f : 0x80000000u;
+}
+static inline uint32_t x86_cvtf2i_near(float f) {   /* MXCSR default: round to nearest even */
+    return (f >= -2147483648.0f && f < 2147483648.0f) ? (uint32_t)(int32_t)nearbyintf(f) : 0x80000000u;
+}

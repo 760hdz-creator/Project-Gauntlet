@@ -98,8 +98,13 @@ enum { KTOPO_POINTS, KTOPO_LINES, KTOPO_TRIS };
 /* Physical base of a DMA context object (nv2a.c). */
 uint32_t nv2a_dma_base(uint32_t handle);
 
+/* PVIDEO overlay (YUY2 video planes used by the WMV player) */
+typedef struct { uint32_t addr, w, h, pitch, ox, oy, ow, oh, frames; } NvOverlay;
+int nv2a_overlay(NvOverlay *o);              /* 1 if an overlay frame is shown */
+
 /* ---- backend (gpu_d3d11.c) ---- */
 void gpu_init(void);
 void gpu_draw(int topo, const KVertex *v, uint32_t nv, const uint32_t *idx, uint32_t ni);
 void gpu_clear(uint32_t flags);              /* NV097_CLEAR_SURFACE */
 void gpu_flip(uint32_t surface_phys);        /* present the surface at this physical address */
+void gpu_vblank(void);                       /* 60 Hz, DPC thread: presents the overlay when no 3D flips happen */

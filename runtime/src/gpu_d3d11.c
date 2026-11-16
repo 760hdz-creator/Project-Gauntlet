@@ -283,10 +283,6 @@ void gpu_init(void) {
 static int ready(void) {
     if (!gpu_ok) gpu_init();
     if (gpu_ok != 1) return 0;
-    if (GetCurrentThreadId() != gpu_tid) {
-        static int warned;
-        if (!warned++) LOG("[gpu] WARNING: GPU call from thread %lu (owner %lu)\n", GetCurrentThreadId(), gpu_tid);
-    }
     return 1;
 }
 
@@ -317,6 +313,9 @@ typedef struct {
 } TexEntry;
 #define TEX_CACHE 4096
 static TexEntry tcache[TEX_CACHE];
+#define TEX_MEMO 1024
+typedef struct { uint32_t frame, addr, fmt, pal_addr, pitch; TexEntry *e; } TexMemo;
+static TexMemo tmemo[TEX_MEMO];
 
 /* swizzle offsets: interleave x and y bits (x first) while both dimensions have bits left */
 static void swizzle_tables(int w, int h, uint32_t *xs, uint32_t *ys) {
@@ -524,6 +523,12 @@ static ID3D11ShaderResourceView *get_texture(int i, int *rect, int *tw, int *th)
         pal_len = 256u >> ((pw >> 2) & 3);
         pal_addr = (nv2a_dma_base(KREG((pw & 1) ? K_DMA_B : K_DMA_A)) + (pw & ~0x3Fu)) & 0x03FFFFFF;
     }
+    /* per-frame memo: the same binding within one frame reuses the entry without rehashing */
+    uint32_t mslot = ((addr >> 6) ^ fmtw ^ (pal_addr >> 6) * 31u) & (TEX_MEMO - 1);
+    TexMemo *mm = &tmemo[mslot];
+    if (mm->frame == frame_no && mm->addr == addr && mm->fmt == fmtw && mm->pal_addr == pal_addr && mm->pitch == pitch &&
+        mm->e && mm->e->srv && mm->e->addr == addr && mm->e->fmt == fmtw)
+        return mm->e->srv;
     uint32_t nbytes = tex_bytes(f, w, h, levels, pitch);
     uint64_t hsh = hash_mem(addr, nbytes, 0xCBF29CE484222325ull);
     if (pal_len) hsh = hash_mem(pal_addr, pal_len * 4, hsh);
@@ -533,6 +538,7 @@ static ID3D11ShaderResourceView *get_texture(int i, int *rect, int *tw, int *th)
         if (e->srv && e->hash == hsh && e->addr == addr && e->fmt == fmtw && e->pitch == pitch && e->w == w && e->h == h &&
             e->pal_addr == pal_addr && e->pal_len == pal_len) {
             e->last_frame = frame_no;
+            mm->frame = frame_no; mm->addr = addr; mm->fmt = fmtw; mm->pal_addr = pal_addr; mm->pitch = pitch; mm->e = e;
             return e->srv;
         }
     }
@@ -554,6 +560,7 @@ static ID3D11ShaderResourceView *get_texture(int i, int *rect, int *tw, int *th)
     v->addr = addr; v->fmt = fmtw; v->pitch = pitch; v->w = w; v->h = h; v->pal_addr = pal_addr; v->pal_len = pal_len;
     v->hash = hsh; v->last_frame = frame_no;
     v->srv = create_texture(v, f, levels, palette);
+    mm->frame = frame_no; mm->addr = addr; mm->fmt = fmtw; mm->pal_addr = pal_addr; mm->pitch = pitch; mm->e = v;
     return v->srv;
 }
 
@@ -876,8 +883,10 @@ static void *ring_map(ID3D11Buffer *b, UINT *pos, UINT cap, UINT bytes) {
     return (uint8_t *)m.pData + *pos;
 }
 
-void gpu_draw(int topo, const KVertex *v, uint32_t nv, const uint32_t *idx, uint32_t ni) {
-    if (!ready() || !ni) return;
+static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *idx, uint32_t ni) {
+    static int nodraw = -1;
+    if (nodraw < 0) { const char *e = getenv("GT_NODRAW"); nodraw = e && *e && *e != '0'; }
+    if (nodraw || !ready() || !ni) return;
     if ((KREG(K_TRANSFORM_MODE) & 3) == 2) {
         static int warned;
         if (!warned++) LOG("[gpu] vertex programs not implemented; skipping draws\n");
@@ -981,7 +990,7 @@ void gpu_draw(int topo, const KVertex *v, uint32_t nv, const uint32_t *idx, uint
 
 /* ---------------- clear / flip ---------------- */
 
-void gpu_clear(uint32_t flags) {
+static void clear_impl(uint32_t flags) {
     if (!ready()) return;
     bind_targets();
     if (flags & 0xF0) {
@@ -1007,6 +1016,42 @@ void gpu_clear(uint32_t flags) {
         UINT f = ((flags & 1) ? D3D11_CLEAR_DEPTH : 0) | ((flags & 2) ? D3D11_CLEAR_STENCIL : 0);
         ID3D11DeviceContext_ClearDepthStencilView(ctx, cur_zs->dsv, f, z, (UINT8)(zv & 0xFF));
     }
+}
+
+static DWORD last_flip_tick;
+
+/* Clear the back buffer and draw srv into the 4:3 letterboxed screen area; (x,y,dw,dh) is the destination
+ * in 640x480 screen space. */
+static void present_srv(ID3D11ShaderResourceView *srv, float x, float y, float dw, float dh) {
+    RECT cr;
+    GetClientRect(g_hwnd, &cr);
+    UINT cw = cr.right - cr.left, ch = cr.bottom - cr.top;
+    if (cw && ch && (cw != bb_w || ch != bb_h)) {
+        ID3D11DeviceContext_OMSetRenderTargets(ctx, 0, NULL, NULL);
+        ID3D11RenderTargetView_Release(bb_rtv);
+        IDXGISwapChain_ResizeBuffers(swap, 0, cw, ch, DXGI_FORMAT_UNKNOWN, 0);
+        make_bb_rtv();
+    }
+    float black[4] = {0, 0, 0, 1};
+    ID3D11DeviceContext_ClearRenderTargetView(ctx, bb_rtv, black);
+    float w = (float)bb_w, h = (float)bb_h, vw = w, vh = w * 3 / 4;
+    if (vh > h) { vh = h; vw = h * 4 / 3; }
+    float sx = vw / 640, sy = vh / 480;
+    D3D11_VIEWPORT vp = {(w - vw) / 2 + x * sx, (h - vh) / 2 + y * sy, dw * sx, dh * sy, 0, 1};
+    ID3D11DeviceContext_OMSetRenderTargets(ctx, 1, &bb_rtv, NULL);
+    ID3D11DeviceContext_RSSetViewports(ctx, 1, &vp);
+    ID3D11DeviceContext_OMSetBlendState(ctx, NULL, NULL, 0xFFFFFFFF);
+    ID3D11DeviceContext_OMSetDepthStencilState(ctx, NULL, 0);
+    ID3D11DeviceContext_RSSetState(ctx, NULL);
+    ID3D11DeviceContext_IASetPrimitiveTopology(ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ID3D11DeviceContext_IASetInputLayout(ctx, NULL);
+    ID3D11DeviceContext_VSSetShader(ctx, blit_vs, NULL, 0);
+    ID3D11DeviceContext_PSSetShader(ctx, blit_ps, NULL, 0);
+    ID3D11DeviceContext_PSSetShaderResources(ctx, 0, 1, &srv);
+    ID3D11DeviceContext_PSSetSamplers(ctx, 0, 1, &blit_sampler);
+    ID3D11DeviceContext_Draw(ctx, 3, 0);
+    ID3D11ShaderResourceView *null_srv = NULL;
+    ID3D11DeviceContext_PSSetShaderResources(ctx, 0, 1, &null_srv);
 }
 
 /* GT_SHOT=N: write out/shots/fNNNNN.bmp every N frames (the flipped surface, guest resolution x GPU_SCALE). */
@@ -1043,47 +1088,116 @@ static void screenshot(Surface *s) {
     ID3D11Texture2D_Release(st);
 }
 
-void gpu_flip(uint32_t addr) {
+static void flip_impl(uint32_t addr) {
     if (!ready()) return;
     frame_no++;
     Surface *s = find_rt(addr);
     static int shot_every = -1;
     if (shot_every < 0) { const char *e = getenv("GT_SHOT"); shot_every = e ? atoi(e) : 0; }
     if (s && shot_every > 0 && frame_no % shot_every == 0) screenshot(s);
-    RECT cr;
-    GetClientRect(g_hwnd, &cr);
-    UINT cw = cr.right - cr.left, ch = cr.bottom - cr.top;
-    if (cw && ch && (cw != bb_w || ch != bb_h)) {
-        ID3D11DeviceContext_OMSetRenderTargets(ctx, 0, NULL, NULL);
-        ID3D11RenderTargetView_Release(bb_rtv);
-        IDXGISwapChain_ResizeBuffers(swap, 0, cw, ch, DXGI_FORMAT_UNKNOWN, 0);
-        make_bb_rtv();
-    }
-    float black[4] = {0, 0, 0, 1};
-    ID3D11DeviceContext_ClearRenderTargetView(ctx, bb_rtv, black);
     if (s) {
-        /* 4:3 letterbox */
-        float w = (float)bb_w, h = (float)bb_h, vw = w, vh = w * 3 / 4;
-        if (vh > h) { vh = h; vw = h * 4 / 3; }
-        D3D11_VIEWPORT vp = {(w - vw) / 2, (h - vh) / 2, vw, vh, 0, 1};
-        ID3D11DeviceContext_OMSetRenderTargets(ctx, 1, &bb_rtv, NULL);
-        ID3D11DeviceContext_RSSetViewports(ctx, 1, &vp);
-        ID3D11DeviceContext_OMSetBlendState(ctx, NULL, NULL, 0xFFFFFFFF);
-        ID3D11DeviceContext_OMSetDepthStencilState(ctx, NULL, 0);
-        ID3D11DeviceContext_RSSetState(ctx, NULL);
-        ID3D11DeviceContext_IASetPrimitiveTopology(ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        ID3D11DeviceContext_IASetInputLayout(ctx, NULL);
-        ID3D11DeviceContext_VSSetShader(ctx, blit_vs, NULL, 0);
-        ID3D11DeviceContext_PSSetShader(ctx, blit_ps, NULL, 0);
-        ID3D11DeviceContext_PSSetShaderResources(ctx, 0, 1, &s->srv);
-        ID3D11DeviceContext_PSSetSamplers(ctx, 0, 1, &blit_sampler);
-        ID3D11DeviceContext_Draw(ctx, 3, 0);
-        ID3D11ShaderResourceView *null_srv = NULL;
-        ID3D11DeviceContext_PSSetShaderResources(ctx, 0, 1, &null_srv);
+        present_srv(s->srv, 0, 0, 640, 480);
     } else {
         static int warned;
         if (warned++ < 4) LOG("[gpu] flip: no surface at %08X\n", addr);
     }
     IDXGISwapChain_Present(swap, 0, 0);
-    if (frame_no % 600 == 0) LOG("[gpu] frame %u (%d pixel shaders, %d render targets)\n", frame_no, n_ps, n_rts);
+    last_flip_tick = GetTickCount();
+    if (frame_no % 300 == 0) {
+        static DWORD t0;
+        DWORD t = GetTickCount();
+        LOG("[gpu] frame %u: %.1f fps (%d pixel shaders, %d render targets)\n", frame_no,
+            t0 ? 300000.0 / (double)(t - t0) : 0.0, n_ps, n_rts);
+        t0 = t;
+    }
+}
+
+/* ---------------- overlay (WMV video plane) ---------------- */
+
+static ID3D11Texture2D *ov_tex;
+static ID3D11ShaderResourceView *ov_srv;
+static uint32_t ov_w, ov_h, ov_last_frames;
+
+static uint8_t clamp8(int v) { return (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v); }
+
+static void vblank_impl(void) {
+    NvOverlay o;
+    if (!nv2a_overlay(&o)) return;
+    if (GetTickCount() - last_flip_tick < 250) return;      /* 3D frames own the screen */
+    if (o.frames == ov_last_frames) return;
+    ov_last_frames = o.frames;
+    if (!ready()) return;
+    if (o.w > 2048 || o.h > 2048 || (uint64_t)o.addr + (uint64_t)o.pitch * o.h > RAM_SIZE) return;
+    if (!ov_tex || ov_w != o.w || ov_h != o.h) {
+        if (ov_tex) { ID3D11ShaderResourceView_Release(ov_srv); ID3D11Texture2D_Release(ov_tex); }
+        D3D11_TEXTURE2D_DESC d = {0};
+        d.Width = o.w; d.Height = o.h; d.MipLevels = 1; d.ArraySize = 1; d.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        d.SampleDesc.Count = 1; d.Usage = D3D11_USAGE_DYNAMIC; d.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        d.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        ID3D11Device_CreateTexture2D(dev, &d, NULL, &ov_tex);
+        ID3D11Device_CreateShaderResourceView(dev, (ID3D11Resource *)ov_tex, NULL, &ov_srv);
+        ov_w = o.w; ov_h = o.h;
+    }
+    D3D11_MAPPED_SUBRESOURCE m;
+    if (FAILED(ID3D11DeviceContext_Map(ctx, (ID3D11Resource *)ov_tex, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) return;
+    for (uint32_t y = 0; y < o.h; y++) {
+        const uint8_t *src = g_mem + o.addr + y * o.pitch;     /* YUY2: Y0 U Y1 V */
+        uint8_t *dst = (uint8_t *)m.pData + y * m.RowPitch;
+        for (uint32_t x = 0; x + 1 < o.w; x += 2, src += 4, dst += 8) {
+            int u = src[1] - 128, v = src[3] - 128;
+            for (int k = 0; k < 2; k++) {
+                int c = (src[k * 2] - 16) * 298;
+                dst[k * 4 + 0] = clamp8((c + 409 * v + 128) >> 8);
+                dst[k * 4 + 1] = clamp8((c - 100 * u - 208 * v + 128) >> 8);
+                dst[k * 4 + 2] = clamp8((c + 516 * u + 128) >> 8);
+                dst[k * 4 + 3] = 255;
+            }
+        }
+    }
+    ID3D11DeviceContext_Unmap(ctx, (ID3D11Resource *)ov_tex, 0);
+    float ow = (float)(o.ow ? o.ow : 640), oh = (float)(o.oh ? o.oh : 480);
+    present_srv(ov_srv, (float)o.ox, (float)o.oy, ow, oh);
+    IDXGISwapChain_Present(swap, 0, 0);
+    static int shot_every = -1;
+    if (shot_every < 0) { const char *e = getenv("GT_SHOT"); shot_every = e ? atoi(e) : 0; }
+    if (shot_every > 0 && o.frames % shot_every == 0) {
+        /* dump the decoded overlay frame */
+        char path[64];
+        CreateDirectoryA("out\\shots", NULL);
+        snprintf(path, sizeof path, "out\\shots\\ov%05u.ppm", o.frames);
+        FILE *f = fopen(path, "wb");
+        if (f) {
+            fprintf(f, "P6\n%u %u\n255\n", o.w, o.h);
+            for (uint32_t y = 0; y < o.h; y++) {
+                const uint8_t *src = g_mem + o.addr + y * o.pitch;
+                for (uint32_t x = 0; x + 1 < o.w; x += 2, src += 4) {
+                    int u = src[1] - 128, v = src[3] - 128;
+                    for (int k = 0; k < 2; k++) {
+                        int c = (src[k * 2] - 16) * 298;
+                        uint8_t px[3] = {clamp8((c + 409 * v + 128) >> 8), clamp8((c - 100 * u - 208 * v + 128) >> 8),
+                                         clamp8((c + 516 * u + 128) >> 8)};
+                        fwrite(px, 1, 3, f);
+                    }
+                }
+            }
+            fclose(f);
+        }
+    }
+}
+
+/* ---------------- public entry points (serialized: pusher thread and DPC thread) ---------------- */
+
+static SRWLOCK gpu_lock = SRWLOCK_INIT;
+
+void gpu_draw(int topo, const KVertex *v, uint32_t nv, const uint32_t *idx, uint32_t ni) {
+    AcquireSRWLockExclusive(&gpu_lock); draw_impl(topo, v, nv, idx, ni); ReleaseSRWLockExclusive(&gpu_lock);
+}
+void gpu_clear(uint32_t flags) {
+    AcquireSRWLockExclusive(&gpu_lock); clear_impl(flags); ReleaseSRWLockExclusive(&gpu_lock);
+}
+void gpu_flip(uint32_t addr) {
+    AcquireSRWLockExclusive(&gpu_lock); flip_impl(addr); ReleaseSRWLockExclusive(&gpu_lock);
+}
+void gpu_vblank(void) {
+    AcquireSRWLockExclusive(&gpu_lock); vblank_impl(); ReleaseSRWLockExclusive(&gpu_lock);
 }

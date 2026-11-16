@@ -286,6 +286,10 @@ static void pgraph_method(uint32_t subch, uint32_t method, uint32_t data) {
     }
 }
 
+/* ---- PVIDEO overlay ---- */
+static int ov_buffer;
+static uint32_t ov_frames;
+
 /* ---- PFIFO pusher: run the push buffer from GET to PUT ("infinitely fast" GPU) ---- */
 static uint32_t pb_get, pb_ret;
 
@@ -375,8 +379,31 @@ void mmio_write(uint32_t a, uint32_t v, int size) {
     case 0x600800: if (pb_frame > 0) LOG("[crtc] start %08X tid %lu\n", v, GetCurrentThreadId()); break;
     case NV_USER_PUT: pfifo_kick(v); break;
     case NV_USER_GET: pb_get = v & 0x03FFFFFC; break;
+    case 0x008700:                                        /* PVIDEO_BUFFER: buffer queued for display */
+        if (v & 0x01) ov_buffer = 0;
+        if (v & 0x10) ov_buffer = 1;
+        if (v & 0x11) ov_frames++;
+        break;
     default: break;
     }
+}
+
+/* PVIDEO overlay state for the renderer (registers at 0x8900+, two buffers). */
+int nv2a_overlay(NvOverlay *o) {
+    if (!ov_frames || (*reg(0x008704) & 1)) return 0;     /* nothing queued yet, or PVIDEO_STOP */
+    int b = ov_buffer;
+    uint32_t size_in = *reg(0x008928 + b * 4), fmt = *reg(0x008958 + b * 4);
+    uint32_t pt_out = *reg(0x008948 + b * 4), size_out = *reg(0x008950 + b * 4);
+    o->addr = (*reg(0x008900 + b * 4) + *reg(0x008920 + b * 4)) & 0x03FFFFFF;
+    o->w = size_in & 0x7FF; o->h = (size_in >> 16) & 0x7FF;
+    o->pitch = fmt & 0x1FFF;
+    o->ox = pt_out & 0xFFF; o->oy = (pt_out >> 16) & 0xFFF;
+    o->ow = size_out & 0xFFF; o->oh = (size_out >> 16) & 0xFFF;
+    o->frames = ov_frames;
+    static int logged;
+    if (!logged++) LOG("[ovl] buffer %d addr %08X %ux%u pitch %u fmt %08X out %u,%u %ux%u\n", b, o->addr, o->w, o->h,
+                       o->pitch, fmt, o->ox, o->oy, o->ow, o->oh);
+    return o->w && o->h && o->pitch;
 }
 
 /* ---- interrupts ---- */
@@ -386,6 +413,7 @@ void mmio_write(uint32_t a, uint32_t v, int size) {
 #define NV_GPU_IRQ      3
 
 void nv2a_vblank(void) {
+    gpu_vblank();
     *reg(NV_PCRTC_INTR) |= 1;
     if (*reg(NV_PCRTC_INTR_EN) & 1) kernel_raise_irq(NV_GPU_IRQ);
 }

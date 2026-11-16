@@ -1,0 +1,4 @@
+# Extra function starts (hex VA). Sources: oracle misses, runtime missed-indirect log.
+B9D0C
+B9BB0
+B9C48

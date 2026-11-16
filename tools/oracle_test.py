@@ -90,6 +90,7 @@ def main():
     ap.add_argument("--trials", type=int, default=4)
     ap.add_argument("--only")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--nonleaf", action="store_true", help="test non-leaf functions without fs: access")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("-v", action="store_true")
     args = ap.parse_args()
@@ -116,10 +117,12 @@ def main():
     funcs = []
     for line in open(os.path.join(ROOT, "out", "lifted", "functions.tsv"), encoding="utf-8"):
         va, n, calls, fs, ind, leaf, name = line.rstrip("\n").split("\t")
-        funcs.append((int(va, 16), int(n), leaf == "1", name))
+        funcs.append((int(va, 16), int(n), leaf == "1", name, fs == "1"))
     if args.only:
         want = {int(x, 16) for x in args.only.split(",")}
         sel = [f for f in funcs if f[0] in want]
+    elif args.nonleaf:
+        sel = [f for f in funcs if not f[2] and not f[4]]
     else:
         sel = [f for f in funcs if f[2]]
     if args.limit:
@@ -128,7 +131,7 @@ def main():
     rng = random.Random(args.seed)
     stats = {"pass": 0, "fail": 0, "skip": 0}
     failures = []
-    for va, n, leaf, name in sel:
+    for va, n, leaf, name, _fs in sel:
         verdict = "pass"
         detail = ""
         done = 0

@@ -1,0 +1,91 @@
+/* Project Gauntlet runtime entry: map memory, load Default.xbe, start the entry thread. */
+#include <windows.h>
+#include <setjmp.h>
+#include <stdlib.h>
+#include "rt.h"
+
+typedef struct { uint32_t va; GuestFunc fn; } FuncEntry;
+extern const FuncEntry g_functable[];
+extern const uint32_t g_functable_count;
+
+static FILE *g_missed;
+
+static GuestFunc lookup(uint32_t va) {
+    uint32_t lo = 0, hi = g_functable_count;
+    while (lo < hi) {
+        uint32_t mid = (lo + hi) / 2;
+        if (g_functable[mid].va < va) lo = mid + 1;
+        else hi = mid;
+    }
+    return (lo < g_functable_count && g_functable[lo].va == va) ? g_functable[lo].fn : NULL;
+}
+
+void x86_unimpl(X86Context *c, uint32_t va, const char *what) {
+    rt_fatal("unimplemented at %08X: %s (esp %08X, [esp] %08X)", va, what, c->esp, RD32(c->esp));
+}
+
+void x86_call_indirect(X86Context *c, uint32_t va) {
+    if (kernel_call(c, va)) return;
+    GuestFunc f = lookup(va);
+    if (!f) {
+        if (g_missed) { fprintf(g_missed, "%X\n", va); fflush(g_missed); }
+        rt_fatal("indirect call to unlifted %08X (return %08X); added to out/missed_targets.txt", va, RD32(c->esp));
+    }
+    f(c);
+}
+
+void x86_int(X86Context *c, uint32_t va, uint32_t vector) {
+    if (vector == 3) { LOG("[rt] int3 at %08X ignored\n", va); c->esp += 0; return; }
+    rt_fatal("int %u at %08X", vector, va);
+}
+uint32_t x86_in(X86Context *c, uint32_t port, int size) { (void)c; LOG("[rt] in port %X size %d\n", port, size); return 0; }
+void x86_out(X86Context *c, uint32_t port, uint32_t v, int size) { (void)c; LOG("[rt] out port %X = %X size %d\n", port, v, size); }
+uint64_t x86_rdtsc(X86Context *c) { (void)c; return sched_now_100ns() * 733 / 10; /* 733 MHz */ }
+
+double x87_load80(uint32_t a) {
+    uint64_t mant = RD64(a);
+    uint16_t se = RD16(a + 8);
+    int exp = se & 0x7FFF;
+    double sign = (se & 0x8000) ? -1.0 : 1.0;
+    if (exp == 0 && mant == 0) return sign * 0.0;
+    if (exp == 0x7FFF) return (mant << 1) ? NAN : sign * INFINITY;
+    return sign * ldexp((double)mant, exp - 16383 - 63);
+}
+
+void x87_store80(uint32_t a, double v) {
+    uint16_t se = signbit(v) ? 0x8000 : 0;
+    uint64_t mant = 0;
+    if (isnan(v)) { se |= 0x7FFF; mant = 0xC000000000000000ull; }
+    else if (isinf(v)) { se |= 0x7FFF; mant = 0x8000000000000000ull; }
+    else if (v != 0) {
+        int e;
+        double m = frexp(fabs(v), &e);
+        mant = (uint64_t)ldexp(m, 64);
+        se |= (uint16_t)(e - 1 + 16383);
+    }
+    WR64(a, mant);
+    WR16(a + 8, se);
+}
+
+static LONG WINAPI crash_handler(EXCEPTION_POINTERS *ep) {
+    EXCEPTION_RECORD *r = ep->ExceptionRecord;
+    uintptr_t addr = r->NumberParameters >= 2 ? (uintptr_t)r->ExceptionInformation[1] : 0;
+    LOG("FATAL: host exception %08lX at %p, data %p (guest %08llX)\n", r->ExceptionCode, r->ExceptionAddress,
+        (void *)addr, (unsigned long long)(addr - (uintptr_t)g_mem));
+    ExitProcess(3);
+}
+
+int main(int argc, char **argv) {
+    const char *xbe = argc > 1 ? argv[1] : "game/Default.xbe";
+    SetUnhandledExceptionFilter(crash_handler);
+    g_missed = fopen("out/missed_targets.txt", "a");
+    mem_init();
+    kernel_init();
+    uint32_t entry = xbe_load(xbe);
+    LOG("[rt] g_mem %p, entry %08X, kernel thunk %08X\n", g_mem, entry, g_kernel_thunk);
+    /* The kernel calls the XBE entry point with no arguments on the initial thread. */
+    sched_create_thread(entry, 0, 0, 0, 0x40000, 0, 0);
+    sched_run();
+    LOG("[rt] all guest threads exited\n");
+    return 0;
+}

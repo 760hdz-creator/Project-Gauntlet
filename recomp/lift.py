@@ -1141,6 +1141,12 @@ def main():
             va, _size, _name, _mod, status = line.rstrip("\n").split("\t")
             if status in ("exact", "moved"):
                 extra.add(int(va, 16))
+    extra_file = os.path.join(HERE, "seeds_extra.txt")  # missed indirect targets (oracle / runtime logs)
+    if os.path.exists(extra_file):
+        for line in open(extra_file):
+            line = line.split("#")[0].strip()
+            if line:
+                extra.add(int(line, 16))
     strong = {entry} | {s for s in extra if prog.is_code(s)}
     weak = find_seeds(prog) - strong
     starts = strong | weak

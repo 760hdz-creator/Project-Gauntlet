@@ -42,7 +42,15 @@ COND_ALIAS = {"c": "b", "nae": "b", "nc": "ae", "nb": "ae", "z": "e", "nz": "ne"
               "nbe": "a", "pe": "p", "po": "np", "nge": "l", "nl": "ge", "ng": "le", "nle": "g"}
 
 
-IO_LO, IO_HI = 0x000C0A00, 0x000D07E0  # D3D section
+IO_RANGES = [(0x000C0A00, 0x000D07E0),   # D3D section (NV2A registers)
+             (0x000D3940, 0x000DBD94)]   # DSOUND section (APU registers)
+
+
+HLE = {}  # va -> name: functions implemented by the runtime instead of lifted
+for _line in open(os.path.join(HERE, "hle.txt"), encoding="utf-8"):
+    _line = _line.split("#")[0].split()
+    if _line:
+        HLE[int(_line[0], 16)] = _line[1]
 
 
 def cond(cc):
@@ -252,7 +260,7 @@ class Emitter:
         self.out = []
         self.unimpl = collections.Counter()
         # XDK D3D library code touches NV2A registers: route its memory accesses through the MMIO check.
-        self.io = IO_LO <= func.start < IO_HI
+        self.io = any(lo <= func.start < hi for lo, hi in IO_RANGES)
 
     # -- operands --
     def addr(self, ins, op):
@@ -353,6 +361,9 @@ class Emitter:
     def run(self):
         f = self.f
         name = f"f_{f.start:08X}"
+        if f.start in HLE:
+            # Replaced by a host implementation (runtime dispatches on the VA); see recomp/hle.txt.
+            return f"/* HLE: {HLE[f.start]} */\nvoid {name}(X86Context *c) {{ x86_hle(c, 0x{f.start:X}u); }}"
         self.out.append(f"void {name}(X86Context *c) {{")
         self.emit("uint32_t eax=c->eax, ecx=c->ecx, edx=c->edx, ebx=c->ebx, esp=c->esp, ebp=c->ebp, esi=c->esi, edi=c->edi;")
         self.emit("uint8_t cf=0, zf=0, sf=0, of=0, pf=0; (void)pf;")

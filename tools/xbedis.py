@@ -23,10 +23,13 @@ class Xbe:
             self.sections.append((name, va, vsize, raw, rsize))
 
     def read(self, va, n):
-        for _name, sva, _vs, raw, rsize in self.sections:
-            if sva <= va < sva + rsize:
-                o = raw + va - sva
-                return self.data[o : o + min(n, sva + rsize - va)]
+        # Bytes past the raw data up to the virtual size are zeros (as loaded).
+        for _name, sva, vsize, raw, rsize in self.sections:
+            if sva <= va < sva + max(rsize, vsize):
+                n = min(n, sva + max(rsize, vsize) - va)
+                o = va - sva
+                got = self.data[raw + o : raw + min(o + n, rsize)] if o < rsize else b""
+                return got + bytes(n - len(got))
         return b""
 
     def section_of(self, va):

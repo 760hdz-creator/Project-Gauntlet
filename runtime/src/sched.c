@@ -36,11 +36,19 @@ static LARGE_INTEGER qpf, qpc0;
 
 uint64_t sched_now_100ns(void) {
     LARGE_INTEGER t;
+    if (!qpf.QuadPart) { QueryPerformanceFrequency(&qpf); QueryPerformanceCounter(&qpc0); }
     QueryPerformanceCounter(&t);
     return (uint64_t)((double)(t.QuadPart - qpc0.QuadPart) * 1e7 / (double)qpf.QuadPart);
 }
 
 GThread *sched_current(void) { return current; }
+
+/* Guest threads only switch when they wait; a thread that polls (input, timers) without waiting
+ * would starve the others. Polling points call this to yield after 1 ms of continuous running. */
+static uint64_t slice_start;
+void sched_maybe_yield(void) {
+    if (current && sched_now_100ns() - slice_start >= 10000) sched_yield();
+}
 uint32_t sched_thread_object(GThread *t) { return t->kthread; }
 
 static void WINAPI fiber_main(void *p) {
@@ -131,8 +139,7 @@ _Noreturn void sched_exit_thread(uint32_t status) {
 }
 
 void sched_run(void) {
-    QueryPerformanceFrequency(&qpf);
-    if (!qpc0.QuadPart) QueryPerformanceCounter(&qpc0);
+    sched_now_100ns(); /* start the clock */
     main_fiber = ConvertThreadToFiber(NULL);
     for (;;) {
         int alive = 0;
@@ -140,6 +147,7 @@ void sched_run(void) {
             if (t->state == T_DONE) continue;
             alive = 1;
             current = t;
+            slice_start = sched_now_100ns();
             SwitchToFiber(t->fiber);
             current = NULL;
         }

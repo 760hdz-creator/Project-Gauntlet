@@ -655,12 +655,25 @@ static void register_handlers(void) {
     REG(46, HalReadWritePCISpace); REG(142, KeSaveFloatingPointState); REG(139, KeRestoreFloatingPointState);
 }
 
+void kernel_tick(void);
+
+static DWORD WINAPI ticker(void *p) {
+    (void)p;
+    timeBeginPeriod(1);
+    for (;;) {
+        kernel_tick();
+        Sleep(1);
+    }
+}
+
 void kernel_init(void) {
     init_data_exports();
     register_handlers();
     fs_register(handlers);
     sched_create_host_thread(dpc_thread);
     g_log_kernel = getenv("GT_KLOG") != NULL;
+    /* KeTickCount must advance while guest code spins on it without calling the kernel. */
+    CreateThread(NULL, 0, ticker, NULL, 0, NULL);
 }
 
 void kernel_tick(void) {
@@ -675,6 +688,7 @@ int kernel_call(X86Context *c, uint32_t va) {
     if (!handlers[ord]) rt_fatal("kernel export %u %s not implemented (caller ret %08X)", ord, e->name ? e->name : "?",
                                  RD32(c->esp));
     kernel_tick();
+    sched_maybe_yield();
     if (g_log_kernel) LOG("[k] %s(%08X, %08X, %08X, %08X) ret %08X\n", e->name, ARG(0), ARG(1), ARG(2), ARG(3), RD32(c->esp));
     c->eax = handlers[ord](c);
     uint32_t pop = 4;

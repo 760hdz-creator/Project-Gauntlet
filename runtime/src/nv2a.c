@@ -123,9 +123,13 @@ static void pfifo_kick(uint32_t put) {
 
 uint32_t mmio_read(uint32_t a, int size) {
     uint32_t v;
-    if (a < NV_BASE || a >= NV_BASE + NV_SIZE) {
+    sched_maybe_yield();   /* register polling loops */
+    if (a == 0xFE820010u) {
+        /* APU: free-running sample counter (48 kHz), polled by DSOUND init */
+        v = (uint32_t)(sched_now_100ns() * 48 / 10000) & ~3u;
+    } else if (a < NV_BASE || a >= NV_BASE + NV_SIZE) {
         v = RD32(a);
-        LOG("[mmio] R%d %08X (non-NV2A)\n", size * 8, a);
+        if (a < 0xFE800000u || a >= 0xFE880000u) LOG("[mmio] R%d %08X (non-NV2A)\n", size * 8, a);
     } else {
         uint32_t off = a - NV_BASE;
         switch (off & ~3u) {
@@ -153,7 +157,7 @@ uint32_t mmio_read(uint32_t a, int size) {
 
 void mmio_write(uint32_t a, uint32_t v, int size) {
     if (a < NV_BASE || a >= NV_BASE + NV_SIZE) {
-        LOG("[mmio] W%d %08X = %08X (non-NV2A)\n", size * 8, a, v);
+        if (a < 0xFE800000u || a >= 0xFE880000u) LOG("[mmio] W%d %08X = %08X (non-NV2A)\n", size * 8, a, v);
         if (size == 4) WR32(a, v); else if (size == 2) WR16(a, (uint16_t)v); else WR8(a, (uint8_t)v);
         return;
     }

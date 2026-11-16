@@ -120,7 +120,9 @@ static void obj_attr_path(uint32_t oa, char *out) {
             return;
         }
     }
-    strcpy(out, name);
+    /* Drive-relative names ("D:\x", root = ObDosDevicesDirectory) live under \??\. */
+    if (name[0] && name[1] == ':') snprintf(out, MAX_PATH, "\\??\\%s", name);
+    else strcpy(out, name);
 }
 
 static void iosb(uint32_t p, uint32_t status, uint32_t info) {

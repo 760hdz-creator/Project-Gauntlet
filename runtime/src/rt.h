@@ -43,7 +43,8 @@ uint32_t sched_thread_object(GThread *t);            /* guest KTHREAD address */
 GThread *sched_create_host_thread(void (*fn)(X86Context *c));
 /* Call a guest stdcall/cdecl function from host code running on a guest thread. */
 void guest_call(X86Context *c, uint32_t va, int nargs, const uint32_t *args);
-void sched_yield(void);                              /* let other threads run */
+void sched_yield(void);
+void sched_maybe_yield(void);                        /* yield if the current slice exceeded 1 ms */                              /* let other threads run */
 _Noreturn void sched_exit_thread(uint32_t status);
 void sched_run(void);                                 /* main loop; returns when all threads exit */
 uint64_t sched_now_100ns(void);                       /* guest time (100 ns units since boot) */

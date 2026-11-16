@@ -1,0 +1,14 @@
+# Guest functions replaced by host implementations: <va> <name>
+# The runtime dispatches x86_hle(c, va) on the VA (runtime/src/hle.c).
+
+# XPP (XDK 4242 USB input): XBE offsets = PDB section 7 offsets - 0x13 (up to XInputGetState), - 0xA8 (after)
+10F199 XInputOpen
+10F1EF XInputClose
+10F1FB XInputGetCapabilities
+10F3D8 XInputGetState
+10F49F XInitDevices
+10F4A4 XGetDevices
+10F4C6 XGetDeviceChanges
+
+# XAPI
+B1B72 GetTickCount

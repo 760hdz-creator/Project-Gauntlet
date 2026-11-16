@@ -34,6 +34,8 @@ void x86_int(X86Context *c, uint32_t va, uint32_t vector);
 uint32_t x86_in(X86Context *c, uint32_t port, int size);
 void x86_out(X86Context *c, uint32_t port, uint32_t value, int size);
 uint64_t x86_rdtsc(X86Context *c);
+/* Guest function replaced by a host implementation (recomp/hle.txt). Pops its own return address and args. */
+void x86_hle(X86Context *c, uint32_t va);
 
 /* ---- memory ---- */
 static inline uint8_t RD8(uint32_t a) { return g_mem[a]; }

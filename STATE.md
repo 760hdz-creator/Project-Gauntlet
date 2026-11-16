@@ -48,12 +48,29 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   - Env: GT_KLOG=1 (log kernel calls), GT_WATCHDOG=<s> (host stack samples; pipe through tools/symbolize.py).
   - Missed indirect targets go to out/missed_targets.txt; relift.sh merges them into recomp/seeds_extra.txt.
     Data pointers inside function-pointer tables are now seeds (CRT initializers): 4773 functions.
-  - BOOT STATUS: XAPI init, CRT init, file system done; main (0x11C10) runs; hangs in D3D device creation
-    (main -> f_000118B0 -> f_000C0A00 (D3D section) -> f_000C55F0 -> f_000C5FC0 polling NV2A registers).
+  - (old) boot status: hung in D3D device creation polling NV2A registers; fixed 2026-11-16 (below).
+
+- 2026-11-16: boot passes D3D device creation, XPP input init, and starts loading assets.
+  - `runtime/src/nv2a.c`: the lifter emits MMIO-checked RD/WR*X for the IO_RANGES sections (D3D, DSOUND) in lift.py.
+    The GPU is always idle: W1C interrupt registers, derived PMC_INTR, PFIFO idle bits, PFB flush. On a DMA_PUT
+    write the pusher runs GET..PUT (jump/call/return, inc/non-inc methods) and executes Kelvin semaphore releases
+    (0x1A4 SET_CONTEXT_DMA_SEMAPHORE, 0x1D6C, 0x1D70) through the RAMHT scan and DMA object (fences at 0xC91000).
+    `GT_NVLOG=1` logs first touch per register, `GT_PBLOG=1` logs every method.
+  - Kernel: KINTERRUPT objects; `kernel_raise_irq` runs the ISR on the DPC thread; 60 Hz vblank (GPU IRQ 3).
+    The KeTickCount host ticker runs at 1 ms. `sched_maybe_yield()` (1 ms slices) at polling points: HLE calls,
+    MMIO reads, kernel calls.
+  - HLE overrides: `recomp/hle.txt` (VA name); the lifter emits `x86_hle(c, va)` stubs, implemented in
+    runtime/src/hle.c. Current overrides: XInput* / XGetDevices / XGetDeviceChanges / XInitDevices (one pad on port 0
+    from host XInput) and GetTickCount (B1B72).
+  - fs: drive-letter names (`D:\x`) map to `\??\D:`.
+  - Lifter fixes: strong seeds stay strong when first reached as weak immediates; section reads are zero-padded to vsize.
+  - APU stub: 0xFE820010 = 48 kHz counter.
+  - BOOT STATUS: models and textures load (sony/objects.ps2, textures.ps2). DSOUND init polls the AC97 (FEC00130)
+    and then crashes on a DEADBEEF object (f_000D50F5, called from f_0002E5C0). Register-level APU emulation is a dead end.
 
 ## Next
-1. D3D strategy at the API boundary: HLE D3D device creation / kickoff / Present (avoid NV2A register-level MMIO),
-   keep the push buffer in guest RAM and parse NV2A methods (Kelvin) into a host renderer. Identify D3D entry points
-   via game-side inline wrappers in g3dmain.obj (PDB names, exact matches) that call into the D3D section.
-2. DSOUND HLE (API level).
-3. Oracle on non-leaf functions: 1563 pass; remaining fails are unicorn NaN/fyl2x artifacts.
+1. DSOUND HLE at the API level: find the DirectSoundCreate / CreateSoundBuffer / CreateSoundStream / IDirectSound*
+   entry points the game calls (32 direct .text->DSOUND call sites; f_0002E5C0 is one caller) and map PDB DSOUND
+   names (PDB section 5 differs in size, so match by signature). Return objects with stub behavior, then add a mixer.
+2. Host renderer for the Kelvin methods (window and swapchain first, then Present/flip on vblank).
+3. Oracle on non-leaf functions: 1563 pass; the remaining fails are unicorn NaN/fyl2x artifacts.

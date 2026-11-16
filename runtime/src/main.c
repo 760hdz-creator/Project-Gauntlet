@@ -75,10 +75,37 @@ static LONG WINAPI crash_handler(EXCEPTION_POINTERS *ep) {
     ExitProcess(3);
 }
 
+static HANDLE g_main_thread;
+
+static DWORD WINAPI watchdog(void *p) {
+    DWORD secs = (DWORD)(uintptr_t)p;
+    for (int sample = 0; sample < 3; sample++) {
+        Sleep(sample ? 300 : secs * 1000);
+        SuspendThread(g_main_thread);
+        CONTEXT ctx = {.ContextFlags = CONTEXT_FULL};
+        GetThreadContext(g_main_thread, &ctx);
+        HMODULE base = GetModuleHandleA(NULL);
+        LOG("[watchdog] sample %d rip +%llX stack:", sample, (unsigned long long)(ctx.Rip - (uintptr_t)base));
+        uintptr_t *sp = (uintptr_t *)ctx.Rsp;
+        MEMORY_BASIC_INFORMATION mbi; VirtualQuery(sp, &mbi, sizeof mbi);
+        uintptr_t *end = (uintptr_t *)((uint8_t *)mbi.BaseAddress + mbi.RegionSize);
+        for (int i = 0, n = 0; sp + i < end && n < 20; i++) {
+            uintptr_t v = sp[i];
+            if (v > (uintptr_t)base && v < (uintptr_t)base + 0x2000000) { LOG(" +%llX", (unsigned long long)(v - (uintptr_t)base)); n++; }
+        }
+        LOG("\n");
+        ResumeThread(g_main_thread);
+    }
+    ExitProcess(4);
+}
+
 int main(int argc, char **argv) {
     const char *xbe = argc > 1 ? argv[1] : "game/Default.xbe";
     SetUnhandledExceptionFilter(crash_handler);
     g_missed = fopen("out/missed_targets.txt", "a");
+    DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &g_main_thread, 0, FALSE,
+                    DUPLICATE_SAME_ACCESS);
+    if (getenv("GT_WATCHDOG")) CreateThread(NULL, 0, watchdog, (void *)(uintptr_t)atoi(getenv("GT_WATCHDOG")), 0, NULL);
     mem_init();
     kernel_init();
     uint32_t entry = xbe_load(xbe);

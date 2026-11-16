@@ -54,3 +54,15 @@ void kernel_init(void);
 void kernel_poll(void);                              /* timers -> DPCs; called by the scheduler */
 int kernel_call(X86Context *c, uint32_t va);          /* 1 if va was a kernel sentinel */
 uint32_t kernel_wait(uint32_t *objects, int count, int wait_any, int64_t timeout_100ns, int has_timeout);
+
+/* handles (kernel.c) */
+typedef struct { int used; int kind; uint32_t obj; void *host; } Handle;
+enum { H_OBJECT = 1, H_FILE };
+uint32_t handle_new(int kind, uint32_t obj, void *host);
+Handle *handle_get(uint32_t h);
+uint32_t handle_object(uint32_t h);
+typedef uint32_t (*KHandler)(X86Context *c);
+
+/* file system (fs.c) */
+void fs_register(KHandler *handlers);
+void fs_close(Handle *h);

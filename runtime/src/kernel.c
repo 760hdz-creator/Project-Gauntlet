@@ -59,11 +59,9 @@ uint32_t kernel_data_export(uint32_t ordinal) {
 
 /* ---------------------------------------------------------------- handles */
 #define MAX_HANDLES 4096
-typedef struct { int used; int kind; uint32_t obj; void *host; } Handle;
-enum { H_OBJECT = 1, H_FILE };
 static Handle handles[MAX_HANDLES];
 
-static uint32_t handle_new(int kind, uint32_t obj, void *host) {
+uint32_t handle_new(int kind, uint32_t obj, void *host) {
     for (int i = 1; i < MAX_HANDLES; i++) {
         if (!handles[i].used) {
             handles[i] = (Handle){1, kind, obj, host};
@@ -73,14 +71,14 @@ static uint32_t handle_new(int kind, uint32_t obj, void *host) {
     rt_fatal("out of handles");
 }
 
-static Handle *handle_get(uint32_t h) {
+Handle *handle_get(uint32_t h) {
     uint32_t i = h / 4;
     if ((h & 3) || i == 0 || i >= MAX_HANDLES || !handles[i].used) return NULL;
     return &handles[i];
 }
 
 /* An object pointer for waits: handle -> kernel object; thread handle -> KTHREAD. */
-static uint32_t handle_object(uint32_t h) {
+uint32_t handle_object(uint32_t h) {
     if (h == 0xFFFFFFFE) return sched_thread_object(sched_current()); /* NtCurrentThread() */
     Handle *p = handle_get(h);
     return p ? p->obj : 0;
@@ -149,7 +147,6 @@ static int read_timeout(uint32_t p, int64_t *out) {
 }
 
 /* ---------------------------------------------------------------- handlers */
-typedef uint32_t (*KHandler)(X86Context *c);
 static KHandler handlers[379];
 #define K(ord, name) static uint32_t k_##name(X86Context *c)
 #define REG(ord, name) handlers[ord] = k_##name
@@ -325,7 +322,7 @@ K(234, NtWaitForSingleObjectEx) {
 K(187, NtClose) {
     Handle *h = handle_get(ARG(0));
     if (!h) return STATUS_INVALID_HANDLE;
-    if (h->kind == H_FILE && h->host) CloseHandle(h->host);
+    if (h->kind == H_FILE) fs_close(h);
     h->used = 0;
     return STATUS_SUCCESS;
 }
@@ -614,6 +611,7 @@ static void register_handlers(void) {
 void kernel_init(void) {
     init_data_exports();
     register_handlers();
+    fs_register(handlers);
     sched_create_host_thread(dpc_thread);
     g_log_kernel = getenv("GT_KLOG") != NULL;
 }

@@ -206,6 +206,10 @@ def find_seeds(prog):
             p = prog.xbe.read(t - 1, 1)
             p3 = prog.xbe.read(t - 3, 1)
             boundary = (p and p[0] in (0xCC, 0x90, 0xC3)) or (p3 and p3[0] == 0xC2) or t % 16 == 0
+            if not boundary:
+                # member of a function pointer table (initializer lists, vtables)?
+                nb = [struct.unpack_from("<I", data, q)[0] for q in (o - 4, o + 4) if 0 <= q <= len(data) - 4]
+                boundary = any(prog.is_code(v) and v >= 0x11000 for v in nb)
             if boundary and plausible(prog, t):
                 seeds.add(t)
     return seeds

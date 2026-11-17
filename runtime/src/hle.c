@@ -39,7 +39,8 @@ static uint32_t packet;
 
 /* ---- scripted input: GT_INPUT="t:button[:hold[:port]],..." (guest seconds; hold default 0.2; port 1-4, default 1) ----
  * buttons: up down left right start back a b x y black white lt rt lthumb rthumb,
- * left stick: su sd sl sr (full deflection); "exit" = test cheat (player 0 stands on an exit, see 0x51100).
+ * left stick: su sd sl sr (full deflection); "exit" = test cheat (player 0 stands on an exit, see 0x51100);
+ * "t:exit:hold:NUM" picks the exit numbered NUM (hex, e.g. 702 = Tower pad III) instead of the nearest.
  * "@VA[:min]" (VA = a function listed in recomp/hooks.txt) is an anchor: the times of the events after it count
  * from the first call of that function after the previous anchor fired, and at least min seconds after it (or
  * after t=0 for the first anchor); until then those events are inactive. "@f:text[:min]" fires instead when the
@@ -85,7 +86,11 @@ static void script_init(void) {
         ev->t = t; ev->hold = hold; ev->digital = 0; ev->analog = -1; ev->stick = -1; ev->cheat = 0;
         ev->anchor = anchor;
         ev->port = port - 1;
-        if (!strcmp(name, "exit")) ev->cheat = 1;
+        if (!strcmp(name, "exit")) {   /* "t:exit[:hold[:NUM]]": NUM (hex) = exit number to touch, default nearest */
+            unsigned num = 0;
+            ev->port = 0;
+            ev->cheat = sscanf(tok, "%*f:%*[a-z]:%*f:%x", &num) == 1 ? (int)(0x10000 | num) : 1;
+        }
         for (int i = 0; i < 8; i++) if (!strcmp(name, dn[i])) ev->digital = (uint16_t)(1u << i);
         for (int i = 0; i < 8; i++) if (!strcmp(name, an[i])) ev->analog = i;
         for (int i = 0; i < 4; i++) if (!strcmp(name, sn[i])) ev->stick = i;
@@ -189,13 +194,14 @@ static void fill_state(uint32_t dst, int port) {
     WR16(dst + 20, (uint16_t)h.Gamepad.sThumbRY);
 }
 
-/* exit test cheat: F8 held (window focused) or a scripted "exit" event active */
+/* exit test cheat: F8 held (window focused) or a scripted "exit" event active.
+ * Returns 0 (off), 1 (nearest exit) or 0x10000 | exit number. */
 static int exit_cheat(void) {
-    if (our_focus() && key(VK_F8)) return 1;
     if (n_script < 0) script_init();
     double now = sched_now_100ns() / 1e7;
     for (int i = 0; i < n_script; i++)
-        if (script[i].cheat && ev_active(&script[i], now)) return 1;
+        if (script[i].cheat && ev_active(&script[i], now)) return script[i].cheat;
+    if (our_focus() && key(VK_F8)) return 1;
     return 0;
 }
 
@@ -250,14 +256,16 @@ void x86_hle(X86Context *c, uint32_t va) {
             uint32_t d = RD32(it);
             if (RD32(d) == 9 && RD32(d + 4) != 0x32) r = (int16_t)RD16(it + 0xDC);
         }
-        if (p == 0xBB4F60 && exit_cheat()) {
-            /* the active exit item (type 9; subtype 0x32 = Tower hub pad) nearest to player 0 */
+        int want = p == 0xBB4F60 ? exit_cheat() : 0;
+        if (want) {
+            /* the active exit item (type 9; subtype 0x32 = Tower hub pad) nearest to player 0, or the one numbered NUM */
             uint32_t a = RD32(0xBD48F8), best = 0;
             int n = (int)RD32(0xBD4ACC);
             float pp[3], bd = 1e30f;
             memcpy(pp, g_mem + p + 0x44, 12);
             for (int i = 0; i < n; i++, a += 0xF0) {
                 if ((int16_t)RD16(a + 0xC4) == -1 || RD32(RD32(a)) != 9) continue;
+                if (want != 1 && (uint16_t)RD16(a + 0xDC) != (want & 0xFFFF)) continue;
                 float ip[3], d = 0;
                 memcpy(ip, g_mem + a + 0x44, 12);
                 for (int v = 0; v < 3; v++) d += (ip[v] - pp[v]) * (ip[v] - pp[v]);

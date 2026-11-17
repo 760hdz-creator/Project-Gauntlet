@@ -164,9 +164,19 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
     pad III, but Cemetery does NOT start: the last [BD4CE0] values logged on that run were the Town exit (11..14),
     none came from pad III, so the player is probably not touching it (dist 4.9-5.8 from its centre). Unresolved.
 
+- 2026-11-16: Province realm cleared up to the Lich (levelG5).
+  - Exit cheat takes a target: scripted `t:exit:hold:NUM` (NUM hex, e.g. 702) touches the exit item numbered NUM
+    instead of the nearest one. Pads are picked directly from the hub spawn (dist ~13), so pad III no longer needs
+    walking. Levels: G1 Fields, G2 Town, G3 Cemetery, G4 Mausoleum, G5 Lich; levelL1 = Tower hub.
+  - Route `out/input_lich.txt` (git-ignored, regenerate): input_town.txt +
+    `,6:exit:8:702,@f:levelG3:1,40:exit:8,@672F0:15,12:a,16:a,20:a,24:a,28:a,@f:tower.ads:5,6:exit:8:703,@f:levelG4:1,
+    40:exit:8,@672F0:15,12:a,16:a,20:a,24:a,28:a,@f:tower.ads:5,6:exit:8:704` (GT_CRYSTALS=1). Lich arena loads ~t=413.
+    Level loads take ~25-30 s after the worlds.ps2 anchor; cheat events earlier than ~35 s fire during the load.
+  - Cemetery, Mausoleum and the Lich arena render correctly at 29.4 fps; no missed targets or new gpu warnings.
+
 ## Next
-1. Pad III (Cemetery): find why standing on it does not start the exit (compare a10/BD4CE0 with pad II), then
-   Mausoleum, Lich and the other realms. Watch for crashes and the one-time
+1. Lich boss fight (walk into the arena; the player idles at spawn), then the other realms (gates need
+   GT_CRYSTALS). Watch for crashes and the one-time
    gpu warnings. Level timing drifts a few seconds between runs (load times): use anchors.
 2. Fog (02A4/029C/09C0) and fixed-function lighting, if a later level uses them (each logs once when hit... add
    a one-time log for fog enable in draw_impl first).

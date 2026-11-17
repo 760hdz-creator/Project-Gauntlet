@@ -253,11 +253,21 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   boss J5 (5000 HP, range 55) active ~t=527, dead ~t=537, shard speech, hub at t=576. K pads 0B00..0B04 =
   K2 K3 K4 K1 K5, boss K5 (3750 HP, range 0 = timer only) dead ~t=454, hub at t=487. No missed targets, no gpu
   warnings, no crash. Logs out/run_j.log, out/run_k.log. All eight unlocked realms (A B C D G I J K) are cleared.
+- 2026-11-17: locked worlds. Gate 86D40 (world 5..13; others use PlayerHasAllCrystals 863D0 via table 129BE8):
+  world 5 = E needs shards 0x1FE (bits 1..8, the eight realm shards), world 6 = F shards 0x3FE + runes 0xFFF,
+  world 8 = H shards 0x7FE. PlayerHasShard 85E20 / PlayerHasRune 85CA0 (player -1 = any active, bit or mask):
+  words at player + 0xF38 / 0xF3A + slot*0x254, OR'd with +0x366C / +0x366E.
+  - GT_SHARDS=<hex> / GT_RUNES=<hex> (test cheats, hooks on those two functions) OR bits into the slot words.
+  - E (pad 0500): E1's exit loads E2 directly; E2 boss Skorne 6000 HP, timer-activated (range 0), dead ~t=152,
+    shard speech, hub. F (0600): F1 -> F2 directly, boss 3000 HP dead ~t=177, hub; F's boss sets shard bit 10 by
+    itself (H opened with GT_SHARDS=3FE). H (0800..0803): H1 H2 H3 play; pad 0803 (H4) refuses with Sumner's
+    "Search again in the battlefield, and I will help you find it" (missing item, under test with GT_RUNES=FFFF).
+  - make_route.py 4th field <chain>: levels passed through before the boss level (`5:1:3:1`, `6:1:3:1`).
+  - The black frame with flaming axes is the game's screen saver (ScreenSaverStart 5A070, MESSAGE.OBJ) after
+    ~10 min without input. Not a bug.
 
 ## Next
-1. The locked worlds: 0500 (hidden, C000, F?), 0600 (single pad, E?), 0800-0803 (H, below the hub). Find what
-   unlocks them (shards? PlayerHasAllCrystals?) and play them. The black frame with
-   flaming axes seen 16 min into the idle I5 arena is still unexplained (probably an idle/attract screen).
+1. H4 (pad 0803) gate; then levels L2/L3, T1..T4 and the secret S1..S9 levels. 
    Check the white-player frames in A1. Watch for crashes, missed targets and the
    one-time gpu warnings (fog: gpu_d3d11.c "fog not implemented"; lighting). Unresolved, low priority: walking onto
    pad III did not fire (dist 4.9-5.8); the targeted cheat bypasses it. Level timing drifts: use anchors.

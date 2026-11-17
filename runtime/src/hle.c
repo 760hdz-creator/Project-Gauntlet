@@ -115,7 +115,12 @@ static void anchor_event(uint32_t va, const char *path) {
 }
 
 /* entry hook (recomp/hooks.txt): fires the armed anchor on this VA and arms the next one */
-void x86_hook(X86Context *c, uint32_t va) { (void)c; anchor_event(va, NULL); }
+void x86_hook(X86Context *c, uint32_t va) {
+    static int hooklog = -1;
+    if (hooklog < 0) { const char *e = getenv("GT_HOOKLOG"); hooklog = e && *e == '1'; }
+    if (hooklog) LOG("[hook] %05X t=%.1f s ret=%08X\n", va, sched_now_100ns() / 1e7, RD32(c->esp));
+    anchor_event(va, NULL);
+}
 
 /* fs: a guest file was opened */
 void script_file_event(const char *path) { anchor_event(0, path); }

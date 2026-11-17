@@ -4,3 +4,6 @@
 672F0 do_exit
 47330 LoadTowerDone
 86840 PlayersSetWaveFinished
+18A10 AudioStreamStop
+18B00 AudioStreamPlay
+820B0 BGMusicStop

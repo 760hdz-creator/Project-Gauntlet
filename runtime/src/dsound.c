@@ -43,6 +43,7 @@ typedef struct {
     uint32_t data, bytes;        /* guest audio data */
     uint32_t freq;               /* 0 = fmt.rate */
     int32_t volume;              /* hundredths of a dB, <= 0 */
+    int32_t bin_vol[2];          /* mix bins 0/1 (front left/right), hundredths of a dB; 0 until set */
     int playing, looping;
     double pos;                  /* in frames */
     int32_t adpcm_block;         /* decoded block cache */
@@ -180,7 +181,7 @@ static void mix_voice(Voice *v, float *out, int n) {
     if (!v->data || !frames) { v->playing = 0; return; }
     uint32_t rate = v->freq ? v->freq : v->fmt.rate;
     double step = (double)rate / OUT_RATE;
-    float g = db_gain(v->volume);
+    float gl = db_gain(v->volume + v->bin_vol[0]), gr = db_gain(v->volume + v->bin_vol[1]);
     for (int i = 0; i < n; i++) {
         if (v->pos >= frames) {
             if (!v->looping) { v->playing = 0; v->pos = 0; return; }
@@ -188,8 +189,8 @@ static void mix_voice(Voice *v, float *out, int n) {
         }
         float l, r;
         voice_frame(v, (uint32_t)v->pos, &l, &r);
-        out[2 * i] += l * g;
-        out[2 * i + 1] += r * g;
+        out[2 * i] += l * gl;
+        out[2 * i + 1] += r * gr;
         v->pos += step;
     }
 }
@@ -433,8 +434,16 @@ int dsound_hle(X86Context *c, uint32_t va) {
     case 0xD5A2A: /* SetVolume(this, LONG) */
         v->volume = (int32_t)ARG(1);
         break;
-    case 0xD5A46: /* SetMixBinVolumes(this, LPCDSMIXBINS): mix bins are not modeled */
+    case 0xD5A46: { /* SetMixBinVolumes(this, LPCDSMIXBINS {count, {bin, LONG volume}*}): only the front pair is
+                     * modeled. The game mutes stopped music streams here (-10000), not with Stop. */
+        uint32_t mb = ARG(1);
+        uint32_t n = mb ? RD32(mb) : 0, pairs = mb ? RD32(mb + 4) : 0;
+        for (uint32_t i = 0; i < n && i < 8 && pairs; i++) {
+            uint32_t bin = RD32(pairs + i * 8);
+            if (bin < 2) v->bin_vol[bin] = (int32_t)RD32(pairs + i * 8 + 4);
+        }
         break;
+    }
     case 0xD5A62: /* Play(this, reserved, reserved, DWORD flags) */
         v->looping = (ARG(3) & DSBPLAY_LOOPING) != 0;
         if (ARG(3) & DSBPLAY_FROMSTART) v->pos = 0;
@@ -452,6 +461,18 @@ int dsound_hle(X86Context *c, uint32_t va) {
         uint32_t play = frames_to_bytes(&v->fmt, (uint32_t)v->pos);
         uint32_t lead = frames_to_bytes(&v->fmt, (v->freq ? v->freq : v->fmt.rate) / 100 + 64);   /* ~10 ms */
         uint32_t write = v->bytes ? (play + lead) % v->bytes : 0;
+        {   /* GT_DSGAP=<ms>: log position polls on a playing looped buffer that come more than ms apart */
+            static int gap = -1;
+            static uint32_t last_buf; static uint64_t last_t;
+            if (gap < 0) { const char *e = getenv("GT_DSGAP"); gap = e ? atoi(e) : 0; }
+            if (gap && v->playing && v->looping) {
+                uint64_t now = sched_now_100ns();
+                if (ARG(0) == last_buf && now - last_t >= (uint64_t)gap * 10000)
+                    LOG("[dsound] poll gap %08X %.1f ms (ring %u bytes, t=%.1f s)\n", ARG(0), (now - last_t) / 1e4,
+                        v->bytes, now / 1e7);
+                if (ARG(0) == last_buf || !last_buf) { last_buf = ARG(0); last_t = now; }
+            }
+        }
         if (ARG(1)) WR32(ARG(1), play);
         if (ARG(2)) WR32(ARG(2), write);
         break;

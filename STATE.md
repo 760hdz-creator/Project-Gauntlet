@@ -173,14 +173,26 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
     40:exit:8,@672F0:15,12:a,16:a,20:a,24:a,28:a,@f:tower.ads:5,6:exit:8:704` (GT_CRYSTALS=1). Lich arena loads ~t=413.
     Level loads take ~25-30 s after the worlds.ps2 anchor; cheat events earlier than ~35 s fire during the load.
   - Cemetery, Mausoleum and the Lich arena render correctly at 29.4 fps; no missed targets or new gpu warnings.
+  - Progression verified (rerun of input_lich.txt): at the hub before pad 703, c4=4051 (not hidden) and
+    waves[7]=07; before 704, waves[7]=0F. PlayersSetWaveFinished fires for every cheat exit.
+
+- 2026-11-16: music glitch during level loads fixed (DSOUND mix bins).
+  - Music = two mono Xbox ADPCM ring buffers of 0x1F80 bytes (~325 ms at 44.1 kHz), refilled by aud_poll (3ADC0)
+    from AudioPoll (187C0) in the main loop. The level loader does not call AudioPoll, so the rings stop refilling
+    (13.9 s with no position polls on the Fields load).
+  - The game "stops" the stream by muting it: AudioStreamStop (18A10) -> aud_stream_stop (3AA50) -> IOP command
+    0xC (B0280 jump table) -> ACA70 (stream volume) -> ADD40 -> IDirectSoundBuffer_SetMixBinVolumes with
+    bins 0/1 at -10000. The HLE ignored mix bins, so the stale ring looped through the whole load.
+  - dsound.c now models mix bins 0/1 (front left/right) per voice; gain = volume + bin volume. Load is silent,
+    then the Province map movie plays (CreateStream stereo 44.1 kHz PCM), then level music.
+  - Debug env: GT_SLICELOG=<ms> (guest slices longer than ms; none after boot, so the scheduler does not starve
+    anything), GT_DSGAP=<ms> (gaps between position polls on looped buffers), GT_HOOKLOG=1 (log every
+    recomp/hooks.txt entry with time and return address). Hooks added: AudioStreamStop, AudioStreamPlay, BGMusicStop.
 
 ## Next
 1. Lich boss fight (walk into the arena; the player idles at spawn), then the other realms (gates need
    GT_CRYSTALS). Unresolved, low priority: walking onto pad III did not fire (dist 4.9-5.8; positioning or a
    lifter float bug in collision); the targeted cheat bypasses it.
-   FIRST on resume: the targeted cheat does not skip hidden pads (c4=0xC000), so loading G4/G5 does not prove
-   PlayersSetWaveFinished fired. Rerun out/input_lich.txt and read the `[cheat]` lines at the hub: before 703
-   expect c4 != C000 and waves[7] bits 0-2 set; before 704 bits 0-3. If not, fix and reword the Province entry.
    Lich fight attempt: append `,@f:levelG5:1,34:su:3,37:a:100` + a stick loop; check HP/death in shots. Watch for crashes and the one-time
    gpu warnings. Level timing drifts a few seconds between runs (load times): use anchors.
 2. Fog (02A4/029C/09C0) and fixed-function lighting, if a later level uses them (each logs once when hit... add

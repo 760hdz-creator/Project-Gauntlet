@@ -150,6 +150,14 @@ void sched_run(void) {
             slice_start = sched_now_100ns();
             SwitchToFiber(t->fiber);
             current = NULL;
+            {   /* GT_SLICELOG=<ms>: log guest slices longer than ms (threads that do not reach a yield point) */
+                static int slicelog = -1;
+                if (slicelog < 0) { const char *e = getenv("GT_SLICELOG"); slicelog = e ? atoi(e) : 0; }
+                uint64_t d = sched_now_100ns() - slice_start;
+                if (slicelog && d >= (uint64_t)slicelog * 10000)
+                    LOG("[sched] thread %08X ran %.1f ms without yielding (t=%.1f s)\n", t->kthread, d / 1e4,
+                        sched_now_100ns() / 1e7);
+            }
         }
         if (!alive) return;
         kernel_poll();

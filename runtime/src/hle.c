@@ -138,6 +138,26 @@ void x86_hook(X86Context *c, uint32_t va) {
         }
         return;
     }
+    if (va == 0x85E20 || va == 0x85CA0) {   /* PlayerHasShard / PlayerHasRune(int player (-1 = any), int bit or mask),
+                            * cdecl (TOWER.OBJ). Each active player (+0xE8 != 0) keeps shard bits in the word at
+                            * player + 0xF38 + slot [+0xC] * 0x254 and rune bits at +0xF3A (OR'd with +0x366C /
+                            * +0x366E for the current game). Worlds 5..13 are gated by 86D40: world 5 needs shards
+                            * 0x1FE (the eight realm shards, bits 1..8), world 6 shards 0x3FE and runes 0xFFF,
+                            * world 8 shards 0x7FE. GT_SHARDS=<hex> / GT_RUNES=<hex> (test cheats) OR those bits in. */
+        static int sh = -2, ru = -2;
+        if (sh == -2) {
+            const char *e = getenv("GT_SHARDS"); sh = e ? (int)strtol(e, NULL, 16) : 0;
+            e = getenv("GT_RUNES"); ru = e ? (int)strtol(e, NULL, 16) : 0;
+        }
+        int m = va == 0x85E20 ? sh : ru;
+        if (m)
+            for (uint32_t p = 0xBB4F60; p < 0xBB4F60 + 4 * 0x6140; p += 0x6140)
+                if (RD32(p + 0xE8)) {
+                    uint32_t w = p + (va == 0x85E20 ? 0xF38 : 0xF3A) + RD32(p + 0xC) * 0x254;
+                    WR16(w, (uint16_t)(RD16(w) | m));
+                }
+        return;
+    }
     if (va == 0x39870) {   /* CritterBossAI(critter), cdecl. Critter +4 = descriptor, +8 = state (0 = inactive;
                             * CritterActivate 34250 sets 3), +0x4B0 health. While inactive the boss activates when
                             * [BEB25C] (now) >= [BEAD34] (activation time, set from now when descriptor byte +0x5C

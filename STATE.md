@@ -223,9 +223,24 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   (attract music), so the first hub event must be absolute. Unverified: in A1 the player renders solid white
   while surrounded by enemies (probably the hit flash; GT_GOD keeps HP at ~495).
 
+- 2026-11-17: realms A-D played through with bosses (GT_GOD=1 GT_BOSSHP=20 GT_CRYSTALS=1).
+  - `python -I tools/make_route.py <W>:<pads>[,...] out.txt` builds a chained route; run with `GT_INPUT=@out.txt`
+    (file form: environment strings stop at 32767 chars). Pad order is not the level number: pad 0101 = levelA6,
+    so the route anchors on any `levels\level<L>` open. The nearest-exit cheat skips 0x0Cxx exits (secret levels
+    levelS*; B2's 0C03 goes to levelS4, which returns to B2).
+  - Realm A: pads 100..105 = A1 A6 A2 A3 A4 A5; A5 = dragon boss (900 HP); "Level 2 experience", stats, hub.
+    Realm B: B1..B6, B6 boss 2000 HP. C: C1..C5, D: D1..D5; each boss level returned to the hub (levelL1 anchor),
+    no gpu warnings, no missed targets. `out/run_realms_all.log`, route `make_route.py 2:6,3:5,4:5,9:5,A:6,B:5`.
+  - Realm I: I1..I4 fine; I5 (pad 904) loads the yeti (critter\yeti.wad, monsters\yeti) but the fight never
+    starts in 20 min: the player stands on an ice slab, the boss bar frame is empty, no GT_BOSSHP clamp logged
+    (it only logs the first boss per run, so unknown). At ~t=2869 (16 min into I5) the frame turns black except
+    for flaming axes inside an ice/fire border, no file opened (unexplained: attract idle? render bug?).
+    J and K untested past their first level.
+
 ## Next
-1. Other realms: play each realm through (pads <W>00..<W>0n with the targeted cheat, like input_lich.txt) and its
-   boss with GT_GOD/GT_BOSSHP; then the locked 0500/0600/0800 worlds. Check the white-player frames in A1. Watch for crashes, missed targets and the
+1. Yeti arena (I5): find what starts the fight (walk somewhere? an item?) and what the black/flaming-axes frames
+   are. Then realms J (A:6) and K (B:5) with make_route; then the locked 0500/0600/0800 worlds.
+   Check the white-player frames in A1. Watch for crashes, missed targets and the
    one-time gpu warnings (fog: gpu_d3d11.c "fog not implemented"; lighting). Unresolved, low priority: walking onto
    pad III did not fire (dist 4.9-5.8); the targeted cheat bypasses it. Level timing drifts: use anchors.
 2. Fog (02A4/029C/09C0) and fixed-function lighting, when a level hits the one-time warnings.

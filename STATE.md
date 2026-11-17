@@ -261,13 +261,22 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   - E (pad 0500): E1's exit loads E2 directly; E2 boss Skorne 6000 HP, timer-activated (range 0), dead ~t=152,
     shard speech, hub. F (0600): F1 -> F2 directly, boss 3000 HP dead ~t=177, hub; F's boss sets shard bit 10 by
     itself (H opened with GT_SHARDS=3FE). H (0800..0803): H1 H2 H3 play; pad 0803 (H4) refuses with Sumner's
-    "Search again in the battlefield, and I will help you find it" (missing item, under test with GT_RUNES=FFFF).
+    "Search again in the battlefield, and I will help you find it" without the runes above 0xFFF. With
+    GT_SHARDS=7FE GT_RUNES=FFFF (`make_route.py 8:4`, out/run_h.log): H4 boss (5625 HP) dead ~t=373, "Garm has
+    been destroyed and his Evil...", Final Stats, back to the title (attract levels C4 D1 F1 G1 H2). No crash,
+    no missed targets. GAME COMPLETED end to end (with test cheats).
+  - Ending movies: init_gamemovie (1BA30) plays "victory" for level id 0x2C, "garm" for 0x2B, else the level's
+    movie (level data +0x34). game_main calls it at 48B8E on a level exit by [BED088] (current level id) and at
+    48CCB when 47A90 returns true (0x2C). Neither VICTORY.wmv nor GARM.wmv played in the cheat run; unknown which
+    levels are 0x2B/0x2C (L2/L3?) and what 47A90 checks. Legend item movies (lantern, soulsave, javelin, iceaxe,
+    fscroll, goodbook, lamp, bellows, scimitar at 11EE..) also unplayed. Level movies movieA1..K3 all play.
   - make_route.py 4th field <chain>: levels passed through before the boss level (`5:1:3:1`, `6:1:3:1`).
   - The black frame with flaming axes is the game's screen saver (ScreenSaverStart 5A070, MESSAGE.OBJ) after
     ~10 min without input. Not a bug.
 
 ## Next
-1. H4 (pad 0803) gate; then levels L2/L3, T1..T4 and the secret S1..S9 levels. 
+1. VICTORY/GARM movies: find level ids 0x2B/0x2C and 47A90's condition; then levels L2/L3, T1..T4 and the
+   secret S1..S9 levels, and the legend item movies. 
    Check the white-player frames in A1. Watch for crashes, missed targets and the
    one-time gpu warnings (fog: gpu_d3d11.c "fog not implemented"; lighting). Unresolved, low priority: walking onto
    pad III did not fire (dist 4.9-5.8); the targeted cheat bypasses it. Level timing drifts: use anchors.

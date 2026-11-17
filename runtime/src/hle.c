@@ -46,33 +46,41 @@ static uint32_t packet;
  * after t=0 for the first anchor); until then those events are inactive. "@f:text[:min]" fires instead when the
  * game opens a file whose guest path contains text (case-insensitive). */
 typedef struct { double t, hold; uint16_t digital; int analog; int stick; int cheat; int anchor; int port; } ScriptEv;
-static ScriptEv script[1024];
+static ScriptEv script[8192];
 static int n_script = -1;
 typedef struct { uint32_t va; double t, min; int armed, fired; char file[48]; } Anchor;
-static Anchor anchors[64];
+static Anchor anchors[256];
 static int n_anchors;
 
 static void script_init(void) {
     n_script = 0;
     const char *e = getenv("GT_INPUT");
     if (!e) return;
-    static char buf[32768];
-    strncpy(buf, e, sizeof buf - 1);
-    buf[sizeof buf - 1] = 0;
+    static char buf[1 << 18];
+    if (*e == '@') {   /* GT_INPUT=@file: read the events from a file (environment strings stop at 32767 chars) */
+        FILE *f = fopen(e + 1, "rb");
+        size_t n = f ? fread(buf, 1, sizeof buf - 1, f) : 0;
+        if (f) fclose(f);
+        buf[n] = 0;
+        if (!f) LOG("[input] cannot open %s\n", e + 1);
+    } else {
+        strncpy(buf, e, sizeof buf - 1);
+        buf[sizeof buf - 1] = 0;
+    }
     int anchor = -1;
-    for (char *tok = strtok(buf, ","); tok && n_script < 1024; tok = strtok(NULL, ",")) {
+    for (char *tok = strtok(buf, ","); tok && n_script < 8192; tok = strtok(NULL, ",")) {
         char name[16] = {0};
         double t = 0, hold = 0.2;
         unsigned va;
         double min = 0;
         char fname[48];
-        if (!strncmp(tok, "@f:", 3) && sscanf(tok + 3, "%47[^:]:%lf", fname, &min) >= 1 && n_anchors < 64) {
+        if (!strncmp(tok, "@f:", 3) && sscanf(tok + 3, "%47[^:]:%lf", fname, &min) >= 1 && n_anchors < 256) {
             anchors[n_anchors] = (Anchor){0, 0, min, n_anchors == 0, 0, {0}};
             strcpy(anchors[n_anchors].file, fname);
             anchor = n_anchors++;
             continue;
         }
-        if (tok[0] == '@' && sscanf(tok + 1, "%x:%lf", &va, &min) >= 1 && n_anchors < 64) {
+        if (tok[0] == '@' && sscanf(tok + 1, "%x:%lf", &va, &min) >= 1 && n_anchors < 256) {
             anchors[n_anchors] = (Anchor){va, 0, min, n_anchors == 0, 0, {0}};
             anchor = n_anchors++;
             continue;
@@ -283,9 +291,13 @@ void x86_hle(X86Context *c, uint32_t va) {
             float pp[3], bd = 1e30f;
             memcpy(pp, g_mem + p + 0x44, 12);
             static int exitlist = -1, listed_n = -1;
+            static double listed_t;
+            double now_s = sched_now_100ns() / 1e7;
             if (exitlist < 0) { const char *e = getenv("GT_EXITLIST"); exitlist = e && *e == '1'; }
-            if (exitlist && listed_n != n) {   /* GT_EXITLIST=1: list the exit items once per item count */
+            if (exitlist && (listed_n != n || now_s - listed_t > 10)) {   /* GT_EXITLIST=1: list the exit items
+                                                                         * when the item count changes, or every 10 s */
                 listed_n = n;
+                listed_t = now_s;
                 uint32_t q = a;
                 for (int i = 0; i < n; i++, q += 0xF0) {
                     if ((int16_t)RD16(q + 0xC4) == -1 || RD32(RD32(q)) != 9) continue;
@@ -298,6 +310,8 @@ void x86_hle(X86Context *c, uint32_t va) {
             for (int i = 0; i < n; i++, a += 0xF0) {
                 if ((int16_t)RD16(a + 0xC4) == -1 || RD32(RD32(a)) != 9) continue;
                 if (want != 1 && (uint16_t)RD16(a + 0xDC) != (want & 0xFFFF)) continue;
+                /* nearest-exit mode skips secret-level exits (number 0x0Cxx, levelS*: they return to the level) */
+                if (want == 1 && ((uint16_t)RD16(a + 0xDC) >> 8) == 0x0C) continue;
                 float ip[3], d = 0;
                 memcpy(ip, g_mem + a + 0x44, 12);
                 for (int v = 0; v < 3; v++) d += (ip[v] - pp[v]) * (ip[v] - pp[v]);

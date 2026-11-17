@@ -149,9 +149,24 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
     pad I; the Province map (Fields, Town, Cemetery, Mausoleum, Lich) opens with the cursor fixed on Fields, so the
     cheat exit (exit number 0x701; player+0x994 was 0x700) does not mark Fields complete. Town stays locked.
 
+- 2026-11-16: level progression (Province realm, world 7).
+  - Completion: game_main (48C18) calls PlayersSetWaveFinished(world, wave) (86840) on a level exit; it sets bit
+    `wave` in the per-world byte at player + 0x3474 + [player+0xC]*0xE + world (read by PlayerWaves 86C40, used by
+    HideExits 511B0). The cheat exit counts: Fields = (7, 0), Town = (7, 1) were recorded.
+  - Tower hub: each numbered pad is its own exit item (type 9, subtype 0), number = world<<8 | wave: pad I 0x700
+    Fields, II 0x701 Town, III 0x702 Cemetery; 0x703/0x704 hidden (c4=0xC000) until earlier waves are done. The
+    Province map after a pad is not a selector: it shows the pad's level for ~3 s and loads it.
+  - A pad fires after the player stands on it: [BD4CE0] counts up (11..14) and all_players_go_to_same_level (67170)
+    passes at >= 14 (or when [BD4C10] != 0).
+  - Exit cheat now touches the nearest active exit item to player 0 (type 9, any subtype).
+  - Routes (git-ignored, regenerate): `out/input_town.txt` = Fields cheat exit, back to hub, pad II, Town cheat exit,
+    back to hub (anchors through `@f:tower.ads:5` at ~t=228). `,4:su:0.8,7:sr:0.4,7:su:0.2` then puts the player on
+    pad III, but Cemetery does NOT start: the last [BD4CE0] values logged on that run were the Town exit (11..14),
+    none came from pad III, so the player is probably not touching it (dist 4.9-5.8 from its centre). Unresolved.
+
 ## Next
-1. Level progression: find what marks a level complete (the cheat exit does not unlock Town), then Town/Cemetery/
-   Mausoleum/Lich and the other realms. Watch for crashes and the one-time
+1. Pad III (Cemetery): find why standing on it does not start the exit (compare a10/BD4CE0 with pad II), then
+   Mausoleum, Lich and the other realms. Watch for crashes and the one-time
    gpu warnings. Level timing drifts a few seconds between runs (load times): use anchors.
 2. Fog (02A4/029C/09C0) and fixed-function lighting, if a later level uses them (each logs once when hit... add
    a one-time log for fog enable in draw_impl first).

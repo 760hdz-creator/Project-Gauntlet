@@ -3,3 +3,4 @@
 
 672F0 do_exit
 47330 LoadTowerDone
+86840 PlayersSetWaveFinished

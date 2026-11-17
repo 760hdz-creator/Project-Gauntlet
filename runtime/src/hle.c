@@ -6,6 +6,7 @@
 #include <shlwapi.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include "rt.h"
 
 /* stdcall return: pop return address + nargs, set eax */
@@ -250,17 +251,26 @@ void x86_hle(X86Context *c, uint32_t va) {
             if (RD32(d) == 9 && RD32(d + 4) != 0x32) r = (int16_t)RD16(it + 0xDC);
         }
         if (p == 0xBB4F60 && exit_cheat()) {
-            uint32_t a = RD32(0xBD48F8);
+            /* the active exit item (type 9; subtype 0x32 = Tower hub pad) nearest to player 0 */
+            uint32_t a = RD32(0xBD48F8), best = 0;
             int n = (int)RD32(0xBD4ACC);
+            float pp[3], bd = 1e30f;
+            memcpy(pp, g_mem + p + 0x44, 12);
             for (int i = 0; i < n; i++, a += 0xF0) {
-                if ((int16_t)RD16(a + 0xC4) == -1 || RD32(RD32(a)) != 9 || RD32(RD32(a) + 4) == 0x32) continue;
-                WR32(p + 0xA10, a);
-                WR32(a + 0xE0, RD32(a + 0xE0) | 1);
-                r = (int16_t)RD16(a + 0xDC);
+                if ((int16_t)RD16(a + 0xC4) == -1 || RD32(RD32(a)) != 9) continue;
+                float ip[3], d = 0;
+                memcpy(ip, g_mem + a + 0x44, 12);
+                for (int v = 0; v < 3; v++) d += (ip[v] - pp[v]) * (ip[v] - pp[v]);
+                if (d < bd) { bd = d; best = a; }
+            }
+            if (best) {
+                WR32(p + 0xA10, best);
+                WR32(best + 0xE0, RD32(best + 0xE0) | 1);
+                if (RD32(RD32(best) + 4) != 0x32) r = (int16_t)RD16(best + 0xDC);
                 static int logged;
-                if (logged++ % 15 == 0) LOG("[cheat] touch exit %d e8=%d 356=%d c10=%d\n", r, RD32(p + 0xE8),
-                                            (int16_t)RD16(p + 0x356), RD32(0xBD4C10));
-                break;
+                if (logged++ % 30 == 0) LOG("[cheat] touch exit %X sub %d num %d dist %.1f ab4=%d e8=%d c10=%d c24=%d cbc=%d\n",
+                    best, RD32(RD32(best) + 4), (int16_t)RD16(best + 0xDC), sqrtf(bd), (int16_t)RD16(p + 0xAB4),
+                    RD32(p + 0xE8), RD32(0xBD4C10), RD32(0xBD4C24), RD32(0xBD4CBC));
             }
         }
         c->eax = (uint32_t)r;

@@ -42,6 +42,20 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     return DefWindowProcW(h, m, w, l);
 }
 
+/* Window placement: GT_MONITOR=N picks monitor N (enumeration order); default = the first non-primary
+ * monitor, so test runs stay off the primary desktop. The window opens without taking focus. */
+typedef struct { int want, idx; RECT pick; int found; } MonPick;
+static BOOL CALLBACK mon_enum(HMONITOR m, HDC dc, LPRECT rc, LPARAM lp) {
+    MonPick *mp = (MonPick *)lp;
+    MONITORINFO mi = {sizeof mi};
+    (void)dc; (void)rc;
+    GetMonitorInfoW(m, &mi);
+    int hit = mp->want >= 0 ? mp->idx == mp->want : !(mi.dwFlags & MONITORINFOF_PRIMARY);
+    if (hit && !mp->found) { mp->pick = mi.rcWork; mp->found = 1; }
+    mp->idx++;
+    return TRUE;
+}
+
 static DWORD WINAPI window_thread(LPVOID ev) {
     WNDCLASSW wc = {0};
     wc.lpfnWndProc = wndproc;
@@ -52,8 +66,14 @@ static DWORD WINAPI window_thread(LPVOID ev) {
     RegisterClassW(&wc);
     RECT r = {0, 0, 1280, 960};
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
-    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Gauntlet Dark Legacy (recomp)", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                             CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, NULL, NULL, wc.hInstance, NULL);
+    const char *me = getenv("GT_MONITOR");
+    MonPick mp = {me ? atoi(me) : -1, 0, {0}, 0};
+    EnumDisplayMonitors(NULL, NULL, mon_enum, (LPARAM)&mp);
+    int x = CW_USEDEFAULT, y = CW_USEDEFAULT;
+    if (mp.found) { x = mp.pick.left + 32; y = mp.pick.top + 32; }
+    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Gauntlet Dark Legacy (recomp)", WS_OVERLAPPEDWINDOW,
+                             x, y, r.right - r.left, r.bottom - r.top, NULL, NULL, wc.hInstance, NULL);
+    ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
     SetEvent((HANDLE)ev);
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0) { TranslateMessage(&msg); DispatchMessageW(&msg); }

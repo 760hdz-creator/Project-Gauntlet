@@ -19,6 +19,7 @@ typedef struct {
 } HostPad;
 typedef struct { DWORD dwPacketNumber; HostPad Gamepad; } HostState;
 static DWORD (WINAPI *host_xinput_get_state)(DWORD, HostState *);
+static DWORD (WINAPI *host_xinput_set_state)(DWORD, WORD *);   /* XINPUT_VIBRATION: left, right */
 
 static void host_xinput_init(void) {
     static int done;
@@ -26,6 +27,7 @@ static void host_xinput_init(void) {
     HMODULE m = LoadLibraryA("xinput1_4.dll");
     if (!m) m = LoadLibraryA("xinput9_1_0.dll");
     if (m) host_xinput_get_state = (void *)GetProcAddress(m, "XInputGetState");
+    if (m) host_xinput_set_state = (void *)GetProcAddress(m, "XInputSetState");
 }
 
 #define PAD_HANDLE 0x7A000000u   /* port in low bits */
@@ -35,8 +37,8 @@ static uint32_t packet;
 
 /* ---- scripted input: GT_INPUT="t:button[:hold],..." (t and hold in guest seconds, hold default 0.2) ----
  * buttons: up down left right start back a b x y black white lt rt lthumb rthumb,
- * left stick: su sd sl sr (full deflection) */
-typedef struct { double t, hold; uint16_t digital; int analog; int stick; } ScriptEv;
+ * left stick: su sd sl sr (full deflection); "exit" = test cheat (player 0 stands on an exit, see 0x51100) */
+typedef struct { double t, hold; uint16_t digital; int analog; int stick; int cheat; } ScriptEv;
 static ScriptEv script[256];
 static int n_script = -1;
 
@@ -55,11 +57,12 @@ static void script_init(void) {
         static const char *an[] = {"a", "b", "x", "y", "black", "white", "lt", "rt"};
         ScriptEv *ev = &script[n_script];
         static const char *sn[] = {"su", "sd", "sl", "sr"};
-        ev->t = t; ev->hold = hold; ev->digital = 0; ev->analog = -1; ev->stick = -1;
+        ev->t = t; ev->hold = hold; ev->digital = 0; ev->analog = -1; ev->stick = -1; ev->cheat = 0;
+        if (!strcmp(name, "exit")) ev->cheat = 1;
         for (int i = 0; i < 8; i++) if (!strcmp(name, dn[i])) ev->digital = (uint16_t)(1u << i);
         for (int i = 0; i < 8; i++) if (!strcmp(name, an[i])) ev->analog = i;
         for (int i = 0; i < 4; i++) if (!strcmp(name, sn[i])) ev->stick = i;
-        if (ev->digital || ev->analog >= 0 || ev->stick >= 0) n_script++;
+        if (ev->digital || ev->analog >= 0 || ev->stick >= 0 || ev->cheat) n_script++;
         else LOG("[input] unknown button '%s'\n", name);
     }
     LOG("[input] %d scripted events\n", n_script);
@@ -130,6 +133,16 @@ static void fill_state(uint32_t dst, int port) {
     WR16(dst + 20, (uint16_t)h.Gamepad.sThumbRY);
 }
 
+/* exit test cheat: F8 held (window focused) or a scripted "exit" event active */
+static int exit_cheat(void) {
+    if (our_focus() && key(VK_F8)) return 1;
+    if (n_script < 0) script_init();
+    double now = sched_now_100ns() / 1e7;
+    for (int i = 0; i < n_script; i++)
+        if (script[i].cheat && now >= script[i].t && now < script[i].t + script[i].hold) return 1;
+    return 0;
+}
+
 static int pad_reported;   /* port 0 insertion reported by XGetDeviceChanges */
 
 void x86_hle(X86Context *c, uint32_t va) {
@@ -152,6 +165,40 @@ void x86_hle(X86Context *c, uint32_t va) {
         c->esp += 4;
         return;
     }
+    case 0x51100: { /* int player_collis_exit(Player *p), cdecl (ITEMS.OBJ): the exit number the player stands on.
+                     * Default -1 when [BD4C10] != 0, else 0. p+0xA10 = touched item; an exit item has type
+                     * [[item]] == 9 (subtype [+4] 0x32 excluded) and its number at +0xDC (int16). Items at [BD48F8]
+                     * (stride 0xF0, count [BD4ACC], +0xC4 == -1 = unused). The debug sound call under
+                     * [BD4D60] & 0x8000 is skipped.
+                     * Test cheat (F8 / scripted "exit"): on press, player 0 is moved onto the first active exit.
+                     * Items and players keep their position at +0x44 (x, y up, z); players also keep pos + (0, 4.4, 0)
+                     * at +0x54 and pos + (0, 2.5, 0) at +0x64, which move by the same delta. Collision then finds the
+                     * exit, and ProcessItems / do_players run the real exit sequence. */
+        uint32_t p = ARG(0);
+        int r = RD32(0xBD4C10) ? -1 : 0;
+        uint32_t it = RD32(p + 0xA10);
+        if (it) {
+            uint32_t d = RD32(it);
+            if (RD32(d) == 9 && RD32(d + 4) != 0x32) r = (int16_t)RD16(it + 0xDC);
+        }
+        if (p == 0xBB4F60 && exit_cheat()) {
+            uint32_t a = RD32(0xBD48F8);
+            int n = (int)RD32(0xBD4ACC);
+            for (int i = 0; i < n; i++, a += 0xF0) {
+                if ((int16_t)RD16(a + 0xC4) == -1 || RD32(RD32(a)) != 9 || RD32(RD32(a) + 4) == 0x32) continue;
+                WR32(p + 0xA10, a);
+                WR32(a + 0xE0, RD32(a + 0xE0) | 1);
+                r = (int16_t)RD16(a + 0xDC);
+                static int logged;
+                if (logged++ % 15 == 0) LOG("[cheat] touch exit %d e8=%d 356=%d c10=%d\n", r, RD32(p + 0xE8),
+                                            (int16_t)RD16(p + 0x356), RD32(0xBD4C10));
+                break;
+            }
+        }
+        c->eax = (uint32_t)r;
+        c->esp += 4;
+        return;
+    }
     case 0xB1B72: /* DWORD GetTickCount(void): polled in timing loops, so it yields (above) */
         c->eax = (uint32_t)(sched_now_100ns() / 10000);
         c->esp += 4;
@@ -169,6 +216,19 @@ void x86_hle(X86Context *c, uint32_t va) {
         if (rem) WR32(rem, 0);
         pad_reported = 1;
         ret_std(c, 3, changed);
+        return;
+    }
+    case 0x10F447: { /* DWORD XInputSetState(HANDLE, PXINPUT_FEEDBACK): rumble. XINPUT_FEEDBACK_HEADER = dwStatus,
+                      * hEvent, Reserved[58]; then wLeftMotorSpeed (+0x42), wRightMotorSpeed (+0x44). The game skips a
+                      * new request while dwStatus == ERROR_IO_PENDING (997), so the request completes at once. */
+        uint32_t h = ARG(0), fb = ARG(1);
+        host_xinput_init();
+        if (host_xinput_set_state) {
+            WORD v[2] = {RD16(fb + 0x42), RD16(fb + 0x44)};
+            host_xinput_set_state((h - PAD_HANDLE) & 3, v);
+        }
+        WR32(fb, 0);
+        ret_std(c, 2, 997);
         return;
     }
     case 0x10F199: /* HANDLE XInputOpen(type, DWORD port, DWORD slot, PXINPUT_POLLING_PARAMETERS) */

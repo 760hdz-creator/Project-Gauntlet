@@ -6,6 +6,7 @@
 10F1EF XInputClose
 10F1FB XInputGetCapabilities
 10F3D8 XInputGetState
+10F447 XInputSetState
 10F49F XInitDevices
 10F4A4 XGetDevices
 10F4C6 XGetDeviceChanges
@@ -36,3 +37,5 @@ D67AC DirectSoundCreateStream
 
 # Game (TOWER.OBJ): crystal count, for the GT_CRYSTALS test cheat
 86390 PlayerNumCrystals
+# Game (ITEMS.OBJ): exit collision, for the F8 / scripted "exit" test cheat
+51100 player_collis_exit

@@ -8,3 +8,8 @@
 18B00 AudioStreamPlay
 820B0 BGMusicStop
 343E0 CritterUpdateHealthMeter
+1C9B0 BossActivate
+1CA20 HealthMeterStart
+1DCC0 BossCameraStart
+1E9F0 TriggerCameraActivate
+39870 CritterBossAI

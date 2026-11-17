@@ -138,6 +138,37 @@ void x86_hook(X86Context *c, uint32_t va) {
         }
         return;
     }
+    if (va == 0x39870) {   /* CritterBossAI(critter), cdecl. Critter +4 = descriptor, +8 = state (0 = inactive;
+                            * CritterActivate 34250 sets 3), +0x4B0 health. While inactive the boss activates when
+                            * [BEB25C] (now) >= [BEAD34] (activation time, set from now when descriptor byte +0x5C
+                            * is not negative) and either descriptor float +0xEC <= 0 or 35F70 (player distance)
+                            * <= +0xEC. GT_BOSSLOG=1 logs this every 5 s per boss. */
+        static int bosslog = -1;
+        static double last;
+        if (bosslog < 0) { const char *e = getenv("GT_BOSSLOG"); bosslog = e && *e == '1'; }
+        double now = sched_now_100ns() / 1e7;
+        if (bosslog && now - last > 5) {
+            last = now;
+            uint32_t cr = RD32(c->esp + 4), d = RD32(cr + 4);
+            float hp, rng, act, t, cp[3], pp[3];
+            uint32_t v;
+            v = RD32(cr + 0x4B0); memcpy(&hp, &v, 4);
+            v = RD32(d + 0xEC); memcpy(&rng, &v, 4);
+            v = RD32(0xBEAD34); memcpy(&act, &v, 4);
+            v = RD32(0xBEB25C); memcpy(&t, &v, 4);
+            memcpy(cp, g_mem + cr + 0x44, 12);
+            memcpy(pp, g_mem + 0xBB4F60 + 0x44, 12);
+            LOG("[boss] t=%.1f critter %08X state %d hp %.0f d5c %02X range %.1f act %.2f now %.2f pos %.1f %.1f %.1f p0 %.1f %.1f %.1f\n",
+                now, cr, RD32(cr + 8), hp, g_mem[d + 0x5C], rng, act, t, cp[0], cp[1], cp[2], pp[0], pp[1], pp[2]);
+            int nd = (int16_t)RD16(cr + 0x12A);   /* MaxPlayerDist 35F70: max of floats at +0x134 (stride 0x24) */
+            for (int i = 0; i < nd && i < 8; i++) {
+                float f; v = RD32(cr + 0x134 + i * 0x24); memcpy(&f, &v, 4);
+                LOG("[boss]   dist[%d] %.1f (entry %08X %08X)\n", i, f, RD32(cr + 0x130 + i * 0x24), RD32(cr + 0x138 + i * 0x24));
+            }
+            if (!nd) LOG("[boss]   no distance entries (+0x12A = 0)\n");
+        }
+        return;
+    }
     static int hooklog = -1;
     if (hooklog < 0) { const char *e = getenv("GT_HOOKLOG"); hooklog = e && *e == '1'; }
     if (hooklog) LOG("[hook] %05X t=%.1f s ret=%08X\n", va, sched_now_100ns() / 1e7, RD32(c->esp));

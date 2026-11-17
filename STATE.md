@@ -237,9 +237,21 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
     for flaming axes inside an ice/fire border, no file opened (unexplained: attract idle? render bug?).
     J and K untested past their first level.
 
+- 2026-11-17: yeti (I5) defeated; the "stall" was the route, not the recomp.
+  - A boss critter stays inactive (state +8 = 0) until CritterBossAI (39870) sees the activation time [BEAD34] passed
+    and MaxPlayerDist (35F70: max over the per-player distance floats at critter +0x134, stride 0x24, count short
+    +0x12A) <= descriptor float +0xEC (yeti: 60). Positions at +0x44 are parent-relative, so they do not give this
+    distance. From the I5 spawn the distance is 129; the old route's stick square kept the player at ~106.
+  - `GT_BOSSLOG=1` logs state, health, range, timer and the distance table every 5 s (hook on CritterBossAI).
+    Hooks added: BossActivate 1C9B0, HealthMeterStart 1CA20, BossCameraStart 1DCC0, TriggerCameraActivate 1E9F0.
+  - make_route.py takes `<W>:<pads>:<walk s>`: the boss arena starts with the stick held up that long (default 3).
+    `make_route.py 9:5:30`: the yeti activates at dist 57 (~t=464), dies (GT_BOSSHP=20), "You have recovered the
+    Shard for the Ice Domain", Level 2 stats, Tower hub at t=512. No missed targets.
+  - The boss bar looking empty in the old notes was the GT_BOSSHP clamp, not a bug.
+
 ## Next
-1. Yeti arena (I5): find what starts the fight (walk somewhere? an item?) and what the black/flaming-axes frames
-   are. Then realms J (A:6) and K (B:5) with make_route; then the locked 0500/0600/0800 worlds.
+1. Realms J (A:6) and K (B:5) with make_route; then the locked 0500/0600/0800 worlds. The black frame with
+   flaming axes seen 16 min into the idle I5 arena is still unexplained (probably an idle/attract screen).
    Check the white-player frames in A1. Watch for crashes, missed targets and the
    one-time gpu warnings (fog: gpu_d3d11.c "fog not implemented"; lighting). Unresolved, low priority: walking onto
    pad III did not fire (dist 4.9-5.8); the targeted cheat bypasses it. Level timing drifts: use anchors.

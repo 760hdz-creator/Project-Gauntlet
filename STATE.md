@@ -211,9 +211,21 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
 - 2026-11-17: mixer linear interpolation (dsound.c mix_voice / mix_stream; loops wrap to frame 0). 45 s WAVDUMP A/B
   over the intro movies: mean |sample diff| 1258.6 -> 1188.2.
 
+- 2026-11-17: all realms reachable. GT_EXITLIST=1 logs every exit item (num, c4, pos) when the exit cheat fires and
+  the item count changed. The Tower hub (levelL1) holds every realm's pads, number = world<<8 | wave; world N =
+  level letter N (1=A ... 7=G Province, 9=I, A=J, B=K). Hub state at a new game: first pads 0100 0200 0300 0400
+  0700 0900 0A00 0B00 active (c4=0051), the rest 8000; 0600 single pad (E?), 0500 hidden (C000, F?), 0800-0803 at
+  y=-28 (H, below the hub). Realm sizes from the pads: A 6, B 6, C 5, D 5, G 5, I 5, J 6, K 5.
+  Route `out/input_realms.txt` (git-ignored): title START+A taps to t=67, `85:exit:8:100`, then per realm
+  `@f:level<L>1:1,40:exit:8,@672F0:15,12:a,16:a,20:a,24:a,28:a,@f:tower.ads:5,6:exit:8:<W>00`. A1 B1 C1 D1 I1 J1
+  K1 load, render (town, forest, castle moat, swamp, ice, arena, ship deck) and exit back to the hub; ~80 s per
+  level; no gpu warnings, no missed targets, no crash in 900 s. Note `@f:tower.ads` fires at t=43 on the title
+  (attract music), so the first hub event must be absolute. Unverified: in A1 the player renders solid white
+  while surrounded by enemies (probably the hit flash; GT_GOD keeps HP at ~495).
+
 ## Next
-1. Other realms: Tower gates need GT_CRYSTALS. Find each realm's hub pad / exit numbers (exit cheat log prints them),
-   chain routes like input_lich.txt, use GT_GOD/GT_BOSSHP for bosses. Watch for crashes, missed targets and the
+1. Other realms: play each realm through (pads <W>00..<W>0n with the targeted cheat, like input_lich.txt) and its
+   boss with GT_GOD/GT_BOSSHP; then the locked 0500/0600/0800 worlds. Check the white-player frames in A1. Watch for crashes, missed targets and the
    one-time gpu warnings (fog: gpu_d3d11.c "fog not implemented"; lighting). Unresolved, low priority: walking onto
    pad III did not fire (dist 4.9-5.8); the targeted cheat bypasses it. Level timing drifts: use anchors.
 2. Fog (02A4/029C/09C0) and fixed-function lighting, when a level hits the one-time warnings.

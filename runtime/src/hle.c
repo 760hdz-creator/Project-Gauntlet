@@ -282,6 +282,19 @@ void x86_hle(X86Context *c, uint32_t va) {
             int n = (int)RD32(0xBD4ACC);
             float pp[3], bd = 1e30f;
             memcpy(pp, g_mem + p + 0x44, 12);
+            static int exitlist = -1, listed_n = -1;
+            if (exitlist < 0) { const char *e = getenv("GT_EXITLIST"); exitlist = e && *e == '1'; }
+            if (exitlist && listed_n != n) {   /* GT_EXITLIST=1: list the exit items once per item count */
+                listed_n = n;
+                uint32_t q = a;
+                for (int i = 0; i < n; i++, q += 0xF0) {
+                    if ((int16_t)RD16(q + 0xC4) == -1 || RD32(RD32(q)) != 9) continue;
+                    float ip[3];
+                    memcpy(ip, g_mem + q + 0x44, 12);
+                    LOG("[exits] %08X sub %X num %04X c4=%04X pos %.1f %.1f %.1f\n", q, RD32(RD32(q) + 4),
+                        RD16(q + 0xDC), RD16(q + 0xC4), ip[0], ip[1], ip[2]);
+                }
+            }
             for (int i = 0; i < n; i++, a += 0xF0) {
                 if ((int16_t)RD16(a + 0xC4) == -1 || RD32(RD32(a)) != 9) continue;
                 if (want != 1 && (uint16_t)RD16(a + 0xDC) != (want & 0xFFFF)) continue;

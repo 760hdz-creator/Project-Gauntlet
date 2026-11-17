@@ -123,9 +123,25 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   - Soak: Fields with A held + a movement loop, 15300 frames, 29.4 fps, no crash, no missed targets, no fog/lighting/
     vertex-program warnings. Combat (attacks, barrels, generators) renders correctly.
 
+- 2026-11-16: level exit, save and load work.
+  - XInputSetState (10F447) HLE: completes at once (game waits while dwStatus == 997), forwards rumble to host
+    XInput. Fixed the crash on the first hit taken (G3DSetRumble read the fake pad handle + 0xA3).
+  - Exit cheat (F8, or scripted `exit`): player_collis_exit (51100) is C now; while held, player 0 touches the first
+    normal exit item (player+0xA10 = item, item+0xE0 |= 1). Exit item = type [[item]] 9, subtype [+4] != 0x32,
+    number at +0xDC. Player positions are parent-relative (moving floor +0xA28, scene node +0x74), so teleporting
+    by writing +0x44 does not work. Real sequence follows: Loading, stats, EXIT scroll, level up, inventory,
+    Save/Change/Load/Quit/Done menu (cursor wraps; ~3 s per step), back to the Tower hub.
+  - Kernel XcSHAInit/Update/Final + XcHMAC (SHA-1 state kept in the guest A_SHA_CTX). Save writes
+    out/hdd/p1/UDATA/4d57000e/000000000030/{Game.xsv,SaveMeta.xbx}; title New/Load -> Load restores the character.
+  - Scripted-input anchors: `recomp/hooks.txt` functions call `x86_hook(c, va)` on entry (lifter); GT_INPUT
+    `@VA[:min]` makes later event times relative to the first call of VA >= min s after the previous anchor.
+    Route to save: `<input_forsaken>,135:exit:8,@672F0:130,12:a,16:a,20:a,24:a,30:down,34:a,38:a,42:a`.
+    Load from title: `30:start,31:a,35.5:down,38:a,41:a,44:a,47:a,50:a`.
+  - Window opens without focus on the first non-primary monitor (GT_MONITOR=N picks one).
+
 ## Next
-1. Play further: finish a level (exit portal), other realms (Battle Grounds etc.), boss (Lich), save/load (U: drive),
-   2+ players. Watch for crashes and the one-time gpu warnings.
+1. Play further: other realms (Battle Grounds etc.), boss (Lich), 2+ players. Watch for crashes and the one-time
+   gpu warnings. Level timing drifts a few seconds between runs (load times): use anchors.
 2. Fog (02A4/029C/09C0) and fixed-function lighting, if a later level uses them (each logs once when hit... add
    a one-time log for fog enable in draw_impl first).
 3. Oracle on non-leaf functions: 1563 pass; the remaining fails are unicorn NaN/fyl2x artifacts.

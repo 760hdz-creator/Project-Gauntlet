@@ -177,6 +177,7 @@ static uint32_t open_common(uint32_t handle_out, uint32_t oa, uint32_t io, uint3
     WR32(handle_out, handle_new(H_FILE, 0, f));
     iosb(io, STATUS_SUCCESS, exists ? 1 : 2); /* FILE_OPENED / FILE_CREATED */
     LOG("[fs] open %s -> %s%s\n", gpath, host, is_dir ? " (dir)" : "");
+    script_file_event(gpath);
     return STATUS_SUCCESS;
 }
 

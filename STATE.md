@@ -139,8 +139,19 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
     Load from title: `30:start,31:a,35.5:down,38:a,41:a,44:a,47:a,50:a`.
   - Window opens without focus on the first non-primary monitor (GT_MONITOR=N picks one).
 
+- 2026-11-16: multiplayer + file anchors.
+  - GT_PADS=1..4: pads on ports 0..N-1 (host XInput controller N each). Scripted events take a port:
+    `t:button:hold:port`. P2 and P4 joined at the Tower (START, then A through New/name/character) and move
+    independently. Joins are serial: a second START during another player's join screen is lost.
+  - GT_INPUT `@f:text[:min]`: anchor on the first guest file open whose path contains text (fs.c calls
+    script_file_event). `recomp/hooks.txt` also hooks LoadTowerDone (47330), but it is polled every frame.
+  - Province round trip: after the level-exit menu, `@f:tower.ads:5,4:sl:0.7,4:sd:0.7,8:sl:1.0,14:a` walks back onto
+    pad I; the Province map (Fields, Town, Cemetery, Mausoleum, Lich) opens with the cursor fixed on Fields, so the
+    cheat exit (exit number 0x701; player+0x994 was 0x700) does not mark Fields complete. Town stays locked.
+
 ## Next
-1. Play further: other realms (Battle Grounds etc.), boss (Lich), 2+ players. Watch for crashes and the one-time
+1. Level progression: find what marks a level complete (the cheat exit does not unlock Town), then Town/Cemetery/
+   Mausoleum/Lich and the other realms. Watch for crashes and the one-time
    gpu warnings. Level timing drifts a few seconds between runs (load times): use anchors.
 2. Fog (02A4/029C/09C0) and fixed-function lighting, if a later level uses them (each logs once when hit... add
    a one-time log for fog enable in draw_impl first).

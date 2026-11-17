@@ -2,3 +2,4 @@
 # Used as anchors for scripted input (GT_INPUT "@va").
 
 672F0 do_exit
+47330 LoadTowerDone

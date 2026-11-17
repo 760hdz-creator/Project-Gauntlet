@@ -3,6 +3,7 @@
  * (and the keyboard once there is a window).
  */
 #include <windows.h>
+#include <shlwapi.h>
 #include <stdlib.h>
 #include <string.h>
 #include "rt.h"
@@ -40,11 +41,12 @@ static uint32_t packet;
  * left stick: su sd sl sr (full deflection); "exit" = test cheat (player 0 stands on an exit, see 0x51100).
  * "@VA[:min]" (VA = a function listed in recomp/hooks.txt) is an anchor: the times of the events after it count
  * from the first call of that function after the previous anchor fired, and at least min seconds after it (or
- * after t=0 for the first anchor); until then those events are inactive. */
+ * after t=0 for the first anchor); until then those events are inactive. "@f:text[:min]" fires instead when the
+ * game opens a file whose guest path contains text (case-insensitive). */
 typedef struct { double t, hold; uint16_t digital; int analog; int stick; int cheat; int anchor; int port; } ScriptEv;
 static ScriptEv script[1024];
 static int n_script = -1;
-typedef struct { uint32_t va; double t, min; int armed, fired; } Anchor;
+typedef struct { uint32_t va; double t, min; int armed, fired; char file[48]; } Anchor;
 static Anchor anchors[64];
 static int n_anchors;
 
@@ -61,8 +63,15 @@ static void script_init(void) {
         double t = 0, hold = 0.2;
         unsigned va;
         double min = 0;
+        char fname[48];
+        if (!strncmp(tok, "@f:", 3) && sscanf(tok + 3, "%47[^:]:%lf", fname, &min) >= 1 && n_anchors < 64) {
+            anchors[n_anchors] = (Anchor){0, 0, min, n_anchors == 0, 0, {0}};
+            strcpy(anchors[n_anchors].file, fname);
+            anchor = n_anchors++;
+            continue;
+        }
         if (tok[0] == '@' && sscanf(tok + 1, "%x:%lf", &va, &min) >= 1 && n_anchors < 64) {
-            anchors[n_anchors] = (Anchor){va, 0, min, n_anchors == 0, 0};
+            anchors[n_anchors] = (Anchor){va, 0, min, n_anchors == 0, 0, {0}};
             anchor = n_anchors++;
             continue;
         }
@@ -85,20 +94,25 @@ static void script_init(void) {
     LOG("[input] %d scripted events, %d anchors\n", n_script, n_anchors);
 }
 
-/* entry hook (recomp/hooks.txt): fires the armed anchor on this VA and arms the next one */
-void x86_hook(X86Context *c, uint32_t va) {
-    (void)c;
+static void anchor_event(uint32_t va, const char *path) {
     if (n_script < 0) script_init();
     for (int i = 0; i < n_anchors; i++) {
-        if (!anchors[i].armed || anchors[i].fired || anchors[i].va != va) continue;
+        if (!anchors[i].armed || anchors[i].fired) continue;
+        if (path ? !anchors[i].file[0] || !StrStrIA(path, anchors[i].file) : anchors[i].va != va) continue;
         double now = sched_now_100ns() / 1e7;
         if (now < (i ? anchors[i - 1].t : 0) + anchors[i].min) continue;
         anchors[i].fired = 1;
         anchors[i].t = sched_now_100ns() / 1e7;
         if (i + 1 < n_anchors) anchors[i + 1].armed = 1;
-        LOG("[input] anchor %d (@%X) at t=%.1f\n", i, va, anchors[i].t);
+        LOG("[input] anchor %d (@%s) at t=%.1f\n", i, path ? anchors[i].file : "hook", anchors[i].t);
     }
 }
+
+/* entry hook (recomp/hooks.txt): fires the armed anchor on this VA and arms the next one */
+void x86_hook(X86Context *c, uint32_t va) { (void)c; anchor_event(va, NULL); }
+
+/* fs: a guest file was opened */
+void script_file_event(const char *path) { anchor_event(0, path); }
 
 static int ev_active(const ScriptEv *ev, double now) {
     double base = 0;

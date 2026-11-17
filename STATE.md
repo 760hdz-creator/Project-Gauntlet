@@ -248,9 +248,15 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
     `make_route.py 9:5:30`: the yeti activates at dist 57 (~t=464), dies (GT_BOSSHP=20), "You have recovered the
     Shard for the Ice Domain", Level 2 stats, Tower hub at t=512. No missed targets.
   - The boss bar looking empty in the old notes was the GT_BOSSHP clamp, not a bug.
+- 2026-11-17: realms J and K played through with bosses (make_route A:6 / B:5, GT_GOD=1 GT_BOSSHP=20
+  GT_CRYSTALS=1, run in parallel; second instance with GT_NOAUDIO=1). J pads 0A00..0A05 = J1 J2 J3 J6 J4 J5,
+  boss J5 (5000 HP, range 55) active ~t=527, dead ~t=537, shard speech, hub at t=576. K pads 0B00..0B04 =
+  K2 K3 K4 K1 K5, boss K5 (3750 HP, range 0 = timer only) dead ~t=454, hub at t=487. No missed targets, no gpu
+  warnings, no crash. Logs out/run_j.log, out/run_k.log. All eight unlocked realms (A B C D G I J K) are cleared.
 
 ## Next
-1. Realms J (A:6) and K (B:5) with make_route; then the locked 0500/0600/0800 worlds. The black frame with
+1. The locked worlds: 0500 (hidden, C000, F?), 0600 (single pad, E?), 0800-0803 (H, below the hub). Find what
+   unlocks them (shards? PlayerHasAllCrystals?) and play them. The black frame with
    flaming axes seen 16 min into the idle I5 arena is still unexplained (probably an idle/attract screen).
    Check the white-player frames in A1. Watch for crashes, missed targets and the
    one-time gpu warnings (fog: gpu_d3d11.c "fog not implemented"; lighting). Unresolved, low priority: walking onto

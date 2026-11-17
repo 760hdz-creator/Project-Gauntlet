@@ -176,7 +176,8 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
 
 ## Next
 1. Lich boss fight (walk into the arena; the player idles at spawn), then the other realms (gates need
-   GT_CRYSTALS). Watch for crashes and the one-time
+   GT_CRYSTALS). Unresolved, low priority: walking onto pad III did not fire (dist 4.9-5.8; positioning or a
+   lifter float bug in collision); the targeted cheat bypasses it. Watch for crashes and the one-time
    gpu warnings. Level timing drifts a few seconds between runs (load times): use anchors.
 2. Fog (02A4/029C/09C0) and fixed-function lighting, if a later level uses them (each logs once when hit... add
    a one-time log for fog enable in draw_impl first).

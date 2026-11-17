@@ -276,8 +276,11 @@ void x86_hle(X86Context *c, uint32_t va) {
                 WR32(best + 0xE0, RD32(best + 0xE0) | 1);
                 if (RD32(RD32(best) + 4) != 0x32) r = (int16_t)RD16(best + 0xDC);
                 static int logged;
-                if (logged++ % 30 == 0) LOG("[cheat] touch exit %X sub %d num %d dist %.1f ab4=%d e8=%d c10=%d c24=%d cbc=%d\n",
-                    best, RD32(RD32(best) + 4), (int16_t)RD16(best + 0xDC), sqrtf(bd), (int16_t)RD16(p + 0xAB4),
+                /* waves done in the exit's world: byte at p + 0x3474 + slot * 0xE + world (world = num >> 8) */
+                int num = (int16_t)RD16(best + 0xDC), world = num > 0 ? (num >> 8) & 0xF : 0;
+                if (logged++ % 30 == 0) LOG("[cheat] touch exit %X sub %d num %X c4=%04X waves[%d]=%02X dist %.1f ab4=%d e8=%d c10=%d c24=%d cbc=%d\n",
+                    best, RD32(RD32(best) + 4), num & 0xFFFF, RD16(best + 0xC4), world,
+                    g_mem[p + 0x3474 + RD32(p + 0xC) * 0xE + world], sqrtf(bd), (int16_t)RD16(p + 0xAB4),
                     RD32(p + 0xE8), RD32(0xBD4C10), RD32(0xBD4C24), RD32(0xBD4CBC));
             }
         }

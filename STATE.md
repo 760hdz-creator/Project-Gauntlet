@@ -177,7 +177,11 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
 ## Next
 1. Lich boss fight (walk into the arena; the player idles at spawn), then the other realms (gates need
    GT_CRYSTALS). Unresolved, low priority: walking onto pad III did not fire (dist 4.9-5.8; positioning or a
-   lifter float bug in collision); the targeted cheat bypasses it. Watch for crashes and the one-time
+   lifter float bug in collision); the targeted cheat bypasses it.
+   FIRST on resume: the targeted cheat does not skip hidden pads (c4=0xC000), so loading G4/G5 does not prove
+   PlayersSetWaveFinished fired. Rerun out/input_lich.txt and read the `[cheat]` lines at the hub: before 703
+   expect c4 != C000 and waves[7] bits 0-2 set; before 704 bits 0-3. If not, fix and reword the Province entry.
+   Lich fight attempt: append `,@f:levelG5:1,34:su:3,37:a:100` + a stick loop; check HP/death in shots. Watch for crashes and the one-time
    gpu warnings. Level timing drifts a few seconds between runs (load times): use anchors.
 2. Fog (02A4/029C/09C0) and fixed-function lighting, if a later level uses them (each logs once when hit... add
    a one-time log for fog enable in draw_impl first).

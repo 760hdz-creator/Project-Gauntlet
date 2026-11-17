@@ -116,6 +116,20 @@ static void anchor_event(uint32_t va, const char *path) {
 
 /* entry hook (recomp/hooks.txt): fires the armed anchor on this VA and arms the next one */
 void x86_hook(X86Context *c, uint32_t va) {
+    if (va == 0x343E0) {   /* CritterUpdateHealthMeter(esi = critter): meter id short at +0x44C, health float +0x4B0.
+                            * GT_BOSSHP=<n> (test cheat): clamp the health of critters with a meter (bosses) to n. */
+        static double cap = -2;
+        if (cap == -2) { const char *e = getenv("GT_BOSSHP"); cap = e ? atof(e) : -1; }
+        if (cap >= 0 && (int16_t)RD16(c->esi + 0x44C) >= 0) {
+            uint32_t hb = RD32(c->esi + 0x4B0); float hp; memcpy(&hp, &hb, 4);
+            if (hp > cap) {
+                static int logged;
+                if (!logged++) LOG("[cheat] boss %08X health %.0f -> %.0f\n", c->esi, hp, cap);
+                float f = (float)cap; memcpy(&hb, &f, 4); WR32(c->esi + 0x4B0, hb);
+            }
+        }
+        return;
+    }
     static int hooklog = -1;
     if (hooklog < 0) { const char *e = getenv("GT_HOOKLOG"); hooklog = e && *e == '1'; }
     if (hooklog) LOG("[hook] %05X t=%.1f s ret=%08X\n", va, sched_now_100ns() / 1e7, RD32(c->esp));
@@ -346,6 +360,25 @@ void x86_hle(X86Context *c, uint32_t va) {
         uint32_t h = ARG(0);
         if (!pad_ok(h)) { ret_std(c, 2, ERROR_DEVICE_NOT_CONNECTED_); return; }
         fill_state(ARG(1), (int)(h & 3));
+        {   /* GT_GOD=1 (test cheat): keep every living player at full health. Health = float at player + 0x3658
+             * (players 0xBB4F60, stride 0x6140); max as player_max_health (66EC0): (level - 1) * [1149A8] +
+             * [114C50], capped at [114C48], level = player + 0x6108. */
+            static int god = -1;
+            if (god < 0) { const char *e = getenv("GT_GOD"); god = e ? atoi(e) : 0; }
+            if (god) {
+                double k, b; float cap;
+                uint64_t kb = RD64(0x1149A8), bb = RD64(0x114C50); uint32_t cb = RD32(0x114C48);
+                memcpy(&k, &kb, 8); memcpy(&b, &bb, 8); memcpy(&cap, &cb, 4);
+                for (int i = 0; i < 4; i++) {
+                    uint32_t p = 0xBB4F60u + (uint32_t)i * 0x6140u;
+                    uint32_t hb = RD32(p + 0x3658); float hp; memcpy(&hp, &hb, 4);
+                    if (!(hp > 0.0f)) continue;
+                    double m = ((int32_t)RD32(p + 0x6108) - 1) * k + b;
+                    float mf = (float)(m > cap ? cap : m);
+                    if (hp < mf) { memcpy(&hb, &mf, 4); WR32(p + 0x3658, hb); }
+                }
+            }
+        }
         ret_std(c, 2, 0);
         return;
     }

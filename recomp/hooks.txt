@@ -7,3 +7,4 @@
 18A10 AudioStreamStop
 18B00 AudioStreamPlay
 820B0 BGMusicStop
+343E0 CritterUpdateHealthMeter

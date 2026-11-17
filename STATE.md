@@ -189,11 +189,24 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
     anything), GT_DSGAP=<ms> (gaps between position polls on looped buffers), GT_HOOKLOG=1 (log every
     recomp/hooks.txt entry with time and return address). Hooks added: AudioStreamStop, AudioStreamPlay, BGMusicStop.
 
+- 2026-11-17: Lich (Province boss) defeated.
+  - Without cheats the player dies in the arena (HP 215 -> 0 by ~t=469), Loading, back to the Province hub: death
+    flow works. With GT_GOD the boss bar drops ~19% in 265 s of held A + a stick square (damage registers).
+  - GT_GOD=1: every XInputGetState refills living players' health (float player+0x3658, max per player_max_health
+    66EC0: (level-1)*[1149A8]+[114C50] capped [114C48], level at player+0x6108).
+  - GT_BOSSHP=<n>: hook on CritterUpdateHealthMeter (343E0, critter in esi; meter id short +0x44C, health float
+    +0x4B0) clamps boss health to n. Lich health is 4500.
+  - Route `out/input_lichfight.txt` (git-ignored, regenerate): input_lich.txt +
+    `,@f:levelG5:1,34:su:3,37:a:200` + for t in 40..220 step 8: `t:sl:1,t+2:su:1,t+4:sr:1,t+6:sd:1`.
+    With GT_GOD=1 GT_BOSSHP=20: boss dies ~t=448 (hand/death animation), "You have defeated the Lich" + reward
+    ~t=464, stats screen (Gold/Kills/Exp, Continue) ~t=494. The run stopped there: held A does not press Continue.
+
 ## Next
-1. Lich boss fight (walk into the arena; the player idles at spawn), then the other realms (gates need
-   GT_CRYSTALS). Unresolved, low priority: walking onto pad III did not fire (dist 4.9-5.8; positioning or a
-   lifter float bug in collision); the targeted cheat bypasses it.
-   Lich fight attempt: append `,@f:levelG5:1,34:su:3,37:a:100` + a stick loop; check HP/death in shots. Watch for crashes and the one-time
+1. After the Lich: tap A on the stats screen (`@f:levelL1` is loaded behind it; anchor on something after the
+   reward, e.g. hook the stats screen or `@f:` the next file) and follow the post-boss flow back to the Tower; check
+   the Province gate/realm-complete state. Then the other realms (gates need GT_CRYSTALS); use GT_GOD/GT_BOSSHP
+   for their bosses. Unresolved, low priority: walking onto pad III did not fire (dist 4.9-5.8; positioning or a
+   lifter float bug in collision); the targeted cheat bypasses it. Watch for crashes and the one-time
    gpu warnings. Level timing drifts a few seconds between runs (load times): use anchors.
 2. Fog (02A4/029C/09C0) and fixed-function lighting, if a later level uses them (each logs once when hit... add
    a one-time log for fog enable in draw_impl first).

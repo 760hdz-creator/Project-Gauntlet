@@ -1,5 +1,5 @@
 /* Host implementations of guest library functions (recomp/hle.txt).
- * XPP input: the game sees one gamepad on port 0, fed by the host's first XInput controller
+ * XPP input: the game sees GT_PADS gamepads (default 1) on ports 0..N-1, fed by the host's XInput controllers
  * (and the keyboard once there is a window).
  */
 #include <windows.h>
@@ -35,13 +35,13 @@ static void host_xinput_init(void) {
 
 static uint32_t packet;
 
-/* ---- scripted input: GT_INPUT="t:button[:hold],..." (t and hold in guest seconds, hold default 0.2) ----
+/* ---- scripted input: GT_INPUT="t:button[:hold[:port]],..." (guest seconds; hold default 0.2; port 1-4, default 1) ----
  * buttons: up down left right start back a b x y black white lt rt lthumb rthumb,
  * left stick: su sd sl sr (full deflection); "exit" = test cheat (player 0 stands on an exit, see 0x51100).
  * "@VA[:min]" (VA = a function listed in recomp/hooks.txt) is an anchor: the times of the events after it count
  * from the first call of that function after the previous anchor fired, and at least min seconds after it (or
  * after t=0 for the first anchor); until then those events are inactive. */
-typedef struct { double t, hold; uint16_t digital; int analog; int stick; int cheat; int anchor; } ScriptEv;
+typedef struct { double t, hold; uint16_t digital; int analog; int stick; int cheat; int anchor; int port; } ScriptEv;
 static ScriptEv script[1024];
 static int n_script = -1;
 typedef struct { uint32_t va; double t, min; int armed, fired; } Anchor;
@@ -66,13 +66,15 @@ static void script_init(void) {
             anchor = n_anchors++;
             continue;
         }
-        if (sscanf(tok, "%lf:%15[a-z]:%lf", &t, name, &hold) < 2) continue;
+        int port = 1;
+        if (sscanf(tok, "%lf:%15[a-z]:%lf:%d", &t, name, &hold, &port) < 2) continue;
         static const char *dn[] = {"up", "down", "left", "right", "start", "back", "lthumb", "rthumb"};
         static const char *an[] = {"a", "b", "x", "y", "black", "white", "lt", "rt"};
         ScriptEv *ev = &script[n_script];
         static const char *sn[] = {"su", "sd", "sl", "sr"};
         ev->t = t; ev->hold = hold; ev->digital = 0; ev->analog = -1; ev->stick = -1; ev->cheat = 0;
         ev->anchor = anchor;
+        ev->port = port - 1;
         if (!strcmp(name, "exit")) ev->cheat = 1;
         for (int i = 0; i < 8; i++) if (!strcmp(name, dn[i])) ev->digital = (uint16_t)(1u << i);
         for (int i = 0; i < 8; i++) if (!strcmp(name, an[i])) ev->analog = i;
@@ -149,10 +151,10 @@ static void fill_state(uint32_t dst, int port) {
         if (key('S')) h.Gamepad.sThumbLY = -32767;
     }
     if (n_script < 0) script_init();
-    if (port == 0 && n_script > 0) {
+    if (n_script > 0) {
         double now = sched_now_100ns() / 1e7;
         for (int i = 0; i < n_script; i++) {
-            if (!ev_active(&script[i], now)) continue;
+            if (script[i].port != port || !ev_active(&script[i], now)) continue;
             buttons |= script[i].digital;
             if (script[i].analog >= 0) analog[script[i].analog] = 255;
             switch (script[i].stick) {
@@ -182,7 +184,20 @@ static int exit_cheat(void) {
     return 0;
 }
 
-static int pad_reported;   /* port 0 insertion reported by XGetDeviceChanges */
+static int pad_reported;   /* insertions reported by XGetDeviceChanges */
+
+/* GT_PADS=N: gamepads on ports 0..N-1 (1..4, default 1) */
+static uint32_t pad_mask(void) {
+    static int n = -1;
+    if (n < 0) {
+        const char *e = getenv("GT_PADS");
+        n = e ? atoi(e) : 1;
+        if (n < 1) n = 1;
+        if (n > 4) n = 4;
+    }
+    return (1u << n) - 1;
+}
+static int pad_ok(uint32_t h) { return (h & ~3u) == PAD_HANDLE && (pad_mask() >> (h & 3) & 1); }
 
 void x86_hle(X86Context *c, uint32_t va) {
     sched_maybe_yield();
@@ -246,12 +261,12 @@ void x86_hle(X86Context *c, uint32_t va) {
         ret_std(c, 2, 0);
         return;
     case 0x10F4A4: /* DWORD XGetDevices(PXPP_DEVICE_TYPE type) */
-        ret_std(c, 1, 1);
+        ret_std(c, 1, pad_mask());
         return;
     case 0x10F4C6: { /* BOOL XGetDeviceChanges(type, PDWORD inserted, PDWORD removed) */
         uint32_t ins = ARG(1), rem = ARG(2);
         int changed = !pad_reported;
-        if (ins) WR32(ins, changed ? 1 : 0);
+        if (ins) WR32(ins, changed ? pad_mask() : 0);
         if (rem) WR32(rem, 0);
         pad_reported = 1;
         ret_std(c, 3, changed);
@@ -271,7 +286,7 @@ void x86_hle(X86Context *c, uint32_t va) {
         return;
     }
     case 0x10F199: /* HANDLE XInputOpen(type, DWORD port, DWORD slot, PXINPUT_POLLING_PARAMETERS) */
-        ret_std(c, 4, ARG(1) == 0 ? PAD_HANDLE : 0);
+        ret_std(c, 4, ARG(1) < 4 && (pad_mask() >> ARG(1) & 1) ? PAD_HANDLE | ARG(1) : 0);
         return;
     case 0x10F1EF: /* VOID XInputClose(HANDLE) */
         ret_std(c, 1, 0);
@@ -284,12 +299,12 @@ void x86_hle(X86Context *c, uint32_t va) {
         memset(g_mem + caps + 6, 0xFF, 8);   /* analog buttons: full range */
         WR16(caps + 14, 0xFFFF); WR16(caps + 16, 0xFFFF); WR16(caps + 18, 0xFFFF); WR16(caps + 20, 0xFFFF);
         WR16(caps + 22, 0xFFFF); WR16(caps + 24, 0xFFFF); /* Out: rumble motors */
-        ret_std(c, 2, (ARG(0) & ~3u) == PAD_HANDLE ? 0 : ERROR_DEVICE_NOT_CONNECTED_);
+        ret_std(c, 2, pad_ok(ARG(0)) ? 0 : ERROR_DEVICE_NOT_CONNECTED_);
         return;
     }
     case 0x10F3D8: { /* DWORD XInputGetState(HANDLE, PXINPUT_STATE) */
         uint32_t h = ARG(0);
-        if ((h & ~3u) != PAD_HANDLE) { ret_std(c, 2, ERROR_DEVICE_NOT_CONNECTED_); return; }
+        if (!pad_ok(h)) { ret_std(c, 2, ERROR_DEVICE_NOT_CONNECTED_); return; }
         fill_state(ARG(1), (int)(h & 3));
         ret_std(c, 2, 0);
         return;

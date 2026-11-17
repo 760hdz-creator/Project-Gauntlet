@@ -37,27 +37,42 @@ static uint32_t packet;
 
 /* ---- scripted input: GT_INPUT="t:button[:hold],..." (t and hold in guest seconds, hold default 0.2) ----
  * buttons: up down left right start back a b x y black white lt rt lthumb rthumb,
- * left stick: su sd sl sr (full deflection); "exit" = test cheat (player 0 stands on an exit, see 0x51100) */
-typedef struct { double t, hold; uint16_t digital; int analog; int stick; int cheat; } ScriptEv;
-static ScriptEv script[256];
+ * left stick: su sd sl sr (full deflection); "exit" = test cheat (player 0 stands on an exit, see 0x51100).
+ * "@VA[:min]" (VA = a function listed in recomp/hooks.txt) is an anchor: the times of the events after it count
+ * from the first call of that function after the previous anchor fired, and at least min seconds after it (or
+ * after t=0 for the first anchor); until then those events are inactive. */
+typedef struct { double t, hold; uint16_t digital; int analog; int stick; int cheat; int anchor; } ScriptEv;
+static ScriptEv script[1024];
 static int n_script = -1;
+typedef struct { uint32_t va; double t, min; int armed, fired; } Anchor;
+static Anchor anchors[64];
+static int n_anchors;
 
 static void script_init(void) {
     n_script = 0;
     const char *e = getenv("GT_INPUT");
     if (!e) return;
-    static char buf[8192];
+    static char buf[32768];
     strncpy(buf, e, sizeof buf - 1);
     buf[sizeof buf - 1] = 0;
-    for (char *tok = strtok(buf, ","); tok && n_script < 256; tok = strtok(NULL, ",")) {
+    int anchor = -1;
+    for (char *tok = strtok(buf, ","); tok && n_script < 1024; tok = strtok(NULL, ",")) {
         char name[16] = {0};
         double t = 0, hold = 0.2;
+        unsigned va;
+        double min = 0;
+        if (tok[0] == '@' && sscanf(tok + 1, "%x:%lf", &va, &min) >= 1 && n_anchors < 64) {
+            anchors[n_anchors] = (Anchor){va, 0, min, n_anchors == 0, 0};
+            anchor = n_anchors++;
+            continue;
+        }
         if (sscanf(tok, "%lf:%15[a-z]:%lf", &t, name, &hold) < 2) continue;
         static const char *dn[] = {"up", "down", "left", "right", "start", "back", "lthumb", "rthumb"};
         static const char *an[] = {"a", "b", "x", "y", "black", "white", "lt", "rt"};
         ScriptEv *ev = &script[n_script];
         static const char *sn[] = {"su", "sd", "sl", "sr"};
         ev->t = t; ev->hold = hold; ev->digital = 0; ev->analog = -1; ev->stick = -1; ev->cheat = 0;
+        ev->anchor = anchor;
         if (!strcmp(name, "exit")) ev->cheat = 1;
         for (int i = 0; i < 8; i++) if (!strcmp(name, dn[i])) ev->digital = (uint16_t)(1u << i);
         for (int i = 0; i < 8; i++) if (!strcmp(name, an[i])) ev->analog = i;
@@ -65,7 +80,31 @@ static void script_init(void) {
         if (ev->digital || ev->analog >= 0 || ev->stick >= 0 || ev->cheat) n_script++;
         else LOG("[input] unknown button '%s'\n", name);
     }
-    LOG("[input] %d scripted events\n", n_script);
+    LOG("[input] %d scripted events, %d anchors\n", n_script, n_anchors);
+}
+
+/* entry hook (recomp/hooks.txt): fires the armed anchor on this VA and arms the next one */
+void x86_hook(X86Context *c, uint32_t va) {
+    (void)c;
+    if (n_script < 0) script_init();
+    for (int i = 0; i < n_anchors; i++) {
+        if (!anchors[i].armed || anchors[i].fired || anchors[i].va != va) continue;
+        double now = sched_now_100ns() / 1e7;
+        if (now < (i ? anchors[i - 1].t : 0) + anchors[i].min) continue;
+        anchors[i].fired = 1;
+        anchors[i].t = sched_now_100ns() / 1e7;
+        if (i + 1 < n_anchors) anchors[i + 1].armed = 1;
+        LOG("[input] anchor %d (@%X) at t=%.1f\n", i, va, anchors[i].t);
+    }
+}
+
+static int ev_active(const ScriptEv *ev, double now) {
+    double base = 0;
+    if (ev->anchor >= 0) {
+        if (!anchors[ev->anchor].fired) return 0;
+        base = anchors[ev->anchor].t;
+    }
+    return now >= base + ev->t && now < base + ev->t + ev->hold;
 }
 
 /* keyboard, only while one of our windows has focus */
@@ -113,7 +152,7 @@ static void fill_state(uint32_t dst, int port) {
     if (port == 0 && n_script > 0) {
         double now = sched_now_100ns() / 1e7;
         for (int i = 0; i < n_script; i++) {
-            if (now < script[i].t || now >= script[i].t + script[i].hold) continue;
+            if (!ev_active(&script[i], now)) continue;
             buttons |= script[i].digital;
             if (script[i].analog >= 0) analog[script[i].analog] = 255;
             switch (script[i].stick) {
@@ -139,7 +178,7 @@ static int exit_cheat(void) {
     if (n_script < 0) script_init();
     double now = sched_now_100ns() / 1e7;
     for (int i = 0; i < n_script; i++)
-        if (script[i].cheat && now >= script[i].t && now < script[i].t + script[i].hold) return 1;
+        if (script[i].cheat && ev_active(&script[i], now)) return 1;
     return 0;
 }
 

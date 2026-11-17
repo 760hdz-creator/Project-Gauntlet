@@ -422,6 +422,80 @@ K(8, DbgPrint) {
 K(49, HalReturnToFirmware) { LOG("[kernel] HalReturnToFirmware(%u)\n", ARG(0)); ExitProcess(0); }
 K(360, HalInitiateShutdown) { LOG("[kernel] HalInitiateShutdown\n"); ExitProcess(0); }
 K(95, KeBugCheck) { rt_fatal("KeBugCheck(%08X)", ARG(0)); }
+
+/* crypto: SHA-1 and HMAC-SHA1, used by XAPI to sign save games (XCalculateSignature*).
+ * The guest's A_SHA_CTX (0x74 bytes) holds our state: h[5], byte count (u64), 64-byte block buffer. */
+typedef struct { uint32_t h[5]; uint64_t n; uint8_t buf[64]; } Sha1;
+
+static uint32_t rol32(uint32_t x, int s) { return (x << s) | (x >> (32 - s)); }
+
+static void sha1_block(Sha1 *s, const uint8_t *p) {
+    uint32_t w[80], a = s->h[0], b = s->h[1], cc = s->h[2], d = s->h[3], e = s->h[4];
+    for (int i = 0; i < 16; i++) w[i] = (uint32_t)p[4 * i] << 24 | p[4 * i + 1] << 16 | p[4 * i + 2] << 8 | p[4 * i + 3];
+    for (int i = 16; i < 80; i++) w[i] = rol32(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+    for (int i = 0; i < 80; i++) {
+        uint32_t f, k;
+        if (i < 20) { f = (b & cc) | (~b & d); k = 0x5A827999; }
+        else if (i < 40) { f = b ^ cc ^ d; k = 0x6ED9EBA1; }
+        else if (i < 60) { f = (b & cc) | (b & d) | (cc & d); k = 0x8F1BBCDC; }
+        else { f = b ^ cc ^ d; k = 0xCA62C1D6; }
+        uint32_t t = rol32(a, 5) + f + e + k + w[i];
+        e = d; d = cc; cc = rol32(b, 30); b = a; a = t;
+    }
+    s->h[0] += a; s->h[1] += b; s->h[2] += cc; s->h[3] += d; s->h[4] += e;
+}
+static void sha1_init(Sha1 *s) {
+    static const uint32_t h0[5] = {0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0};
+    memcpy(s->h, h0, sizeof h0);
+    s->n = 0;
+}
+static void sha1_update(Sha1 *s, const uint8_t *p, uint32_t len) {
+    while (len--) {
+        s->buf[s->n++ & 63] = *p++;
+        if ((s->n & 63) == 0) sha1_block(s, s->buf);
+    }
+}
+static void sha1_final(Sha1 *s, uint8_t out[20]) {
+    uint64_t bits = s->n * 8;
+    uint8_t pad = 0x80, z = 0, len[8];
+    sha1_update(s, &pad, 1);
+    while ((s->n & 63) != 56) sha1_update(s, &z, 1);
+    for (int i = 0; i < 8; i++) len[i] = (uint8_t)(bits >> (56 - 8 * i));
+    sha1_update(s, len, 8);
+    for (int i = 0; i < 20; i++) out[i] = (uint8_t)(s->h[i / 4] >> (24 - 8 * (i % 4)));
+}
+
+K(335, XcSHAInit) { Sha1 s; sha1_init(&s); memcpy(g_mem + ARG(0), &s, sizeof s); return 0; }
+K(336, XcSHAUpdate) {
+    Sha1 s;
+    memcpy(&s, g_mem + ARG(0), sizeof s);
+    sha1_update(&s, g_mem + ARG(1), ARG(2));
+    memcpy(g_mem + ARG(0), &s, sizeof s);
+    return 0;
+}
+K(337, XcSHAFinal) {
+    Sha1 s;
+    memcpy(&s, g_mem + ARG(0), sizeof s);
+    sha1_final(&s, g_mem + ARG(1));
+    return 0;
+}
+K(340, XcHMAC) {
+    /* (key, keylen, data1, len1, data2, len2, digest): HMAC-SHA1 over data1 || data2 */
+    uint8_t k[64] = {0}, pad[64], inner[20];
+    uint32_t kl = ARG(1);
+    Sha1 s;
+    if (kl > 64) { sha1_init(&s); sha1_update(&s, g_mem + ARG(0), kl); sha1_final(&s, k); }
+    else memcpy(k, g_mem + ARG(0), kl);
+    for (int i = 0; i < 64; i++) pad[i] = k[i] ^ 0x36;
+    sha1_init(&s); sha1_update(&s, pad, 64);
+    if (ARG(2)) sha1_update(&s, g_mem + ARG(2), ARG(3));
+    if (ARG(4)) sha1_update(&s, g_mem + ARG(4), ARG(5));
+    sha1_final(&s, inner);
+    for (int i = 0; i < 64; i++) pad[i] = k[i] ^ 0x5C;
+    sha1_init(&s); sha1_update(&s, pad, 64); sha1_update(&s, inner, 20);
+    sha1_final(&s, g_mem + ARG(6));
+    return 0;
+}
 K(327, XeLoadSection) { WR32(ARG(0) + 8, RD32(ARG(0) + 8) + 1); return STATUS_SUCCESS; } /* sections preloaded */
 K(328, XeUnloadSection) { return STATUS_SUCCESS; }
 K(24, ExQueryNonVolatileSetting) {
@@ -646,6 +720,7 @@ static void register_handlers(void) {
     REG(301, RtlNtStatusToDosError);
     REG(8, DbgPrint); REG(49, HalReturnToFirmware); REG(360, HalInitiateShutdown); REG(95, KeBugCheck);
     REG(327, XeLoadSection); REG(328, XeUnloadSection); REG(24, ExQueryNonVolatileSetting);
+    REG(335, XcSHAInit); REG(336, XcSHAUpdate); REG(337, XcSHAFinal); REG(340, XcHMAC);
     REG(1, AvGetSavedDataAddress); REG(2, AvSendTVEncoderOption); REG(3, AvSetDisplayMode);
     REG(4, AvSetSavedDataAddress); REG(47, HalRegisterShutdownNotification); REG(44, HalGetInterruptVector);
     REG(109, KeInitializeInterrupt); REG(98, KeConnectInterrupt); REG(100, KeDisconnectInterrupt);

@@ -56,6 +56,12 @@ for _line in open(os.path.join(HERE, "hle.txt"), encoding="utf-8"):
     if _line:
         HLE[int(_line[0], 16)] = _line[1]
 
+HOOKS = {}  # va -> name: lifted functions that call x86_hook(c, va) on entry (recomp/hooks.txt)
+for _line in open(os.path.join(HERE, "hooks.txt"), encoding="utf-8"):
+    _line = _line.split("#")[0].split()
+    if _line:
+        HOOKS[int(_line[0], 16)] = _line[1]
+
 
 def cond(cc):
     return COND[COND_ALIAS.get(cc, cc)]
@@ -386,6 +392,8 @@ class Emitter:
             return (f"/* HLE: {HLE.get(f.start, 'DSOUND internal')} */\n"
                     f"void {name}(X86Context *c) {{ x86_hle(c, 0x{f.start:X}u); }}")
         self.out.append(f"void {name}(X86Context *c) {{")
+        if f.start in HOOKS:
+            self.emit(f"x86_hook(c, 0x{f.start:X}u);  /* {HOOKS[f.start]} */")
         self.emit("uint32_t eax=c->eax, ecx=c->ecx, edx=c->edx, ebx=c->ebx, esp=c->esp, ebp=c->ebp, esi=c->esi, edi=c->edi;")
         self.emit("uint8_t cf=0, zf=0, sf=0, of=0, pf=0; (void)pf;")
         order = sorted(f.insns)

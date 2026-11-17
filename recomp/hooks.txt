@@ -1,0 +1,4 @@
+# Lifted functions that call x86_hook(c, va) on entry (runtime/src/hle.c), then run normally: <va> <name>
+# Used as anchors for scripted input (GT_INPUT "@va").
+
+672F0 do_exit

@@ -187,8 +187,12 @@ static void mix_voice(Voice *v, float *out, int n) {
             if (!v->looping) { v->playing = 0; v->pos = 0; return; }
             v->pos = fmod(v->pos, frames);
         }
-        float l, r;
-        voice_frame(v, (uint32_t)v->pos, &l, &r);
+        float l, r, l1, r1;   /* linear interpolation between frame k and k+1 (wraps when looping) */
+        uint32_t k = (uint32_t)v->pos, k1 = k + 1 < frames ? k + 1 : v->looping ? 0 : k;
+        float t = (float)(v->pos - k);
+        voice_frame(v, k1, &l1, &r1);
+        voice_frame(v, k, &l, &r);
+        l += (l1 - l) * t; r += (r1 - r) * t;
         out[2 * i] += l * gl;
         out[2 * i + 1] += r * gr;
         v->pos += step;
@@ -209,6 +213,16 @@ static void mix_stream(float *out, int n) {
         else {
             l = *(const int16_t *)p / 32768.0f;
             r = f->channels == 2 ? *(const int16_t *)(p + 2) / 32768.0f : l;
+        }
+        if (s->wr - s->rd >= 2u * f->block_align) {   /* linear interpolation with the next frame */
+            const uint8_t *q = s->fifo + ((s->rd + f->block_align) % FIFO_BYTES);
+            float l1, r1, t = (float)s->frac;
+            if (f->bits == 8) { l1 = (q[0] - 128) / 128.0f; r1 = f->channels == 2 ? (q[1] - 128) / 128.0f : l1; }
+            else {
+                l1 = *(const int16_t *)q / 32768.0f;
+                r1 = f->channels == 2 ? *(const int16_t *)(q + 2) / 32768.0f : l1;
+            }
+            l += (l1 - l) * t; r += (r1 - r) * t;
         }
         out[2 * i] += l;
         out[2 * i + 1] += r;

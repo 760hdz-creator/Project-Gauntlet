@@ -201,14 +201,20 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
     With GT_GOD=1 GT_BOSSHP=20: boss dies ~t=448 (hand/death animation), "You have defeated the Lich" + reward
     ~t=464, stats screen (Gold/Kills/Exp, Continue) ~t=494. The run stopped there: held A does not press Continue.
 
+- 2026-11-17: post-Lich flow verified, no crash. Route `out/input_postlich.txt` (git-ignored, regenerate):
+  input_lich.txt + `,@f:levelG5:1,34:su:3` + A taps `t:a:0.3` every 0.6 s for t=37..300 (held A does not press
+  menu buttons) + the stick square for t in 40..220 step 8 + `,@f:levelL1:1` + `t:a` for t=10..118 step 4.
+  With GT_CRYSTALS=1 GT_GOD=1 GT_BOSSHP=20: "You have defeated the Lich" ~t=464, Loading, Province ending cutscene
+  ("Congratulations!", "...recover all eight shards that restore the entrance to the Desecr...") ~t=505-525,
+  realm hub with all five pads lit ~t=535 (levelL1 anchor at t=486.8), 29.4 fps to t=640.
+  shop_g.vbk opens after every level exit, so it is not a boss-specific anchor.
+- 2026-11-17: mixer linear interpolation (dsound.c mix_voice / mix_stream; loops wrap to frame 0). 45 s WAVDUMP A/B
+  over the intro movies: mean |sample diff| 1258.6 -> 1188.2.
+
 ## Next
-1. After the Lich: tap A on the stats screen (`@f:levelL1` is loaded behind it; anchor on something after the
-   reward, e.g. hook the stats screen or `@f:` the next file) and follow the post-boss flow back to the Tower; check
-   the Province gate/realm-complete state. Then the other realms (gates need GT_CRYSTALS); use GT_GOD/GT_BOSSHP
-   for their bosses. Unresolved, low priority: walking onto pad III did not fire (dist 4.9-5.8; positioning or a
-   lifter float bug in collision); the targeted cheat bypasses it. Watch for crashes and the one-time
-   gpu warnings. Level timing drifts a few seconds between runs (load times): use anchors.
-2. Fog (02A4/029C/09C0) and fixed-function lighting, if a later level uses them (each logs once when hit... add
-   a one-time log for fog enable in draw_impl first).
+1. Other realms: Tower gates need GT_CRYSTALS. Find each realm's hub pad / exit numbers (exit cheat log prints them),
+   chain routes like input_lich.txt, use GT_GOD/GT_BOSSHP for bosses. Watch for crashes, missed targets and the
+   one-time gpu warnings (fog: gpu_d3d11.c "fog not implemented"; lighting). Unresolved, low priority: walking onto
+   pad III did not fire (dist 4.9-5.8); the targeted cheat bypasses it. Level timing drifts: use anchors.
+2. Fog (02A4/029C/09C0) and fixed-function lighting, when a level hits the one-time warnings.
 3. Oracle on non-leaf functions: 1563 pass; the remaining fails are unicorn NaN/fyl2x artifacts.
-4. Linear resampling in the mixer.

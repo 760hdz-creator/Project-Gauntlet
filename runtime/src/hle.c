@@ -138,6 +138,12 @@ void x86_hook(X86Context *c, uint32_t va) {
         }
         return;
     }
+    if (va == 0x1BA30) {   /* init_gamemovie(int id), cdecl: id 0x2C = "victory", 0x2B = "garm", else the level's
+                            * movie (level data +0x34). Skipped while [136248] != 0, [1349F8] & 0x10 or [BD4C10] != 0. */
+        LOG("[movie] init_gamemovie(%X) t=%.1f ret=%08X level %X skip %X %X %X\n", RD32(c->esp + 4),
+            sched_now_100ns() / 1e7, RD32(c->esp), RD32(0xBED088), RD32(0x136248), RD32(0x1349F8), RD32(0xBD4C10));
+        return;
+    }
     if (va == 0x85E20 || va == 0x85CA0) {   /* PlayerHasShard / PlayerHasRune(int player (-1 = any), int bit or mask),
                             * cdecl (TOWER.OBJ). Each active player (+0xE8 != 0) keeps shard bits in the word at
                             * player + 0xF38 + slot [+0xC] * 0x254 and rune bits at +0xF3A (OR'd with +0x366C /

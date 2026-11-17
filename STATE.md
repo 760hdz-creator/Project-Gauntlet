@@ -267,16 +267,18 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
     no missed targets. GAME COMPLETED end to end (with test cheats).
   - Ending movies: init_gamemovie (1BA30) plays "victory" for level id 0x2C, "garm" for 0x2B, else the level's
     movie (level data +0x34). game_main calls it at 48B8E on a level exit by [BED088] (current level id) and at
-    48CCB when 47A90 returns true (0x2C). Neither VICTORY.wmv nor GARM.wmv played in the cheat run; unknown which
-    levels are 0x2B/0x2C (L2/L3?) and what 47A90 checks. Legend item movies (lantern, soulsave, javelin, iceaxe,
-    fscroll, goodbook, lamp, bellows, scimitar at 11EE..) also unplayed. Level movies movieA1..K3 all play.
+    48CCB when do_stats_display (47A90) returns true. H4 is level id 0x2C: init_gamemovie(0x2C) runs at ~t=406
+    with no skip flag. The movie player (B1750) returns at once while any pad holds a button (any_level 2FC60,
+    masks 0x2000000/0x8000000/0x4000000/0x1000000/0x40000), so make_route's A taps skipped it. With input stopped
+    after the boss (out/input_h_victory.txt), victory.wmv opens and plays (stereo 44.1 kHz stream). Hook logs:
+    `[movie] init_gamemovie(id)` (recomp/hooks.txt 1BA30). GARM (0x2B) and the legend item movies are unplayed.
+    Level movies movieA1..K3 all play.
   - make_route.py 4th field <chain>: levels passed through before the boss level (`5:1:3:1`, `6:1:3:1`).
   - The black frame with flaming axes is the game's screen saver (ScreenSaverStart 5A070, MESSAGE.OBJ) after
     ~10 min without input. Not a bug.
 
 ## Next
-1. VICTORY/GARM movies: find level ids 0x2B/0x2C and 47A90's condition; then levels L2/L3, T1..T4 and the
-   secret S1..S9 levels, and the legend item movies. 
+1. Levels L2/L3, T1..T4 and the secret S1..S9 levels; GARM movie (level id 0x2B) and the legend item movies. 
    Check the white-player frames in A1. Watch for crashes, missed targets and the
    one-time gpu warnings (fog: gpu_d3d11.c "fog not implemented"; lighting). Unresolved, low priority: walking onto
    pad III did not fire (dist 4.9-5.8); the targeted cheat bypasses it. Level timing drifts: use anchors.

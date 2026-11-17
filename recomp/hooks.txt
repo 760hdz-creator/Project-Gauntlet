@@ -15,3 +15,4 @@
 39870 CritterBossAI
 85E20 PlayerHasShard
 85CA0 PlayerHasRune
+1BA30 init_gamemovie

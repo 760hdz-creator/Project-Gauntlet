@@ -221,6 +221,35 @@ void x86_hook(X86Context *c, uint32_t va) {
         }
         return;
     }
+    if (va == 0x945F0 || va == 0x946F0 || va == 0x94690 || va == 0x946C0) {   /* blit creation: callers, first time each */
+        static uint32_t seen[1024];
+        static int ns;
+        uint32_t ret = RD32(c->esp), key = ret ^ (va << 20);
+        int dup = 0;
+        for (int i = 0; i < ns; i++) if (seen[i] == key) { dup = 1; break; }
+        if (!dup && ns < 1024) {
+            seen[ns++] = key;
+            uint32_t r2 = 0;
+            for (uint32_t a = c->esp + 4; a < c->esp + 0x200; a += 4) {
+                uint32_t v = RD32(a);
+                if (v >= 0x11000 && v < 0xB0000 && g_mem[v - 5] == 0xE8) { r2 = v; break; }
+            }
+            LOG("[blit] %X t=%.1f ret %X caller %X args %08X %08X %08X %08X\n", va, sched_now_100ns() / 1e7, ret, r2,
+                RD32(c->esp + 4), RD32(c->esp + 8), RD32(c->esp + 12), RD32(c->esp + 16));
+        }
+        return;
+    }
+    if (va == 0x87770) {   /* Tower/Sumner state machine: state [137C0C], speech timer/id, trigger cam [134218..24] */
+        static uint32_t last[4] = {~0u};
+        uint32_t cur[4] = {RD32(0x137C0C), RD32(0x137BFC), RD32(0x134218), RD32(0xBD4D60)};
+        if (memcmp(cur, last, sizeof cur)) {
+            uint32_t tb = RD32(0x137BF8);
+            LOG("[sumner] t=%.1f state %X speech %X timer %.2f trigcam %X 4d60 %X 134220 %d 134224 %d\n", sched_now_100ns() / 1e7,
+                cur[0], cur[1], *(float *)&tb, cur[2], cur[3], (int)RD32(0x134220), (int)RD32(0x134224));
+            memcpy(last, cur, sizeof cur);
+        }
+        return;
+    }
     if (va == 0x1BA30) {   /* init_gamemovie(int id), cdecl: id 0x2C = "victory", 0x2B = "garm", else the level's
                             * movie (level data +0x34). Skipped while [136248] != 0, [1349F8] & 0x10 or [BD4C10] != 0. */
         LOG("[movie] init_gamemovie(%X) t=%.1f ret=%08X level %X skip %X %X %X\n", RD32(c->esp + 4),

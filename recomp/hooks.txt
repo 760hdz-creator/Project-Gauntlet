@@ -30,3 +30,8 @@
 892D0 NewHelp
 89720 DoHelp
 256E0 MoveCam_event
+945F0 MBNewBlit
+946F0 MBNewTempBlit
+94690 MBOX_NewBlit
+946C0 MBOX_NewBlitSized
+87770 TowerSumnerUpdate

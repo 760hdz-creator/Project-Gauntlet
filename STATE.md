@@ -301,6 +301,13 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
     GT_DRAWSTACK=texaddr, hook logs [caption] [select] [wiz] [help] [pad]. Build check: grep `error` (clang),
     not `error C`. Python heredocs that write C `\n` must use chr(92)+'n'.
 
+- 2026-11-17: characters. Select roster (16 slots, right from the default): Sorceress, Jester, 7 locked "?"
+  (secret characters FAL HYE JAC MED MIN OGR TIG UNI need unlock codes), Warrior, Valkyrie, Wizard, Archer,
+  Dwarf, Knight. `python -I tools/make_char.py <k>` (k right presses, -k left: -1 Knight, -2 Dwarf, -3 Archer,
+  -4 Wizard, -5 Valkyrie, -6 Warrior). All 8 unlocked heroes load players\<cls>\{yel00,anim,sfxyel}, play A1 for
+  40 s and exit (out/run_char*.log, out/shots_char*). Knight, Archer and Valkyrie shots show the player as a
+  solid white silhouette in combat (same as the A1 "white player" note): hit flash or a combiner bug, unchecked.
+
 ## Next
 1. Missing text: "Press START" in empty HUD panels and the wizard subtitles in the cutscene bars (above).
    Then test the other characters (routes only use the default hero), GARM movie (level id 0x2B) and the

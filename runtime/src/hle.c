@@ -138,10 +138,111 @@ void x86_hook(X86Context *c, uint32_t va) {
         }
         return;
     }
+    if (va == 0x1B8B0 || va == 0x1B670 || va == 0x1B980 || va == 0x872A0 || va == 0x85990) {   /* caption trace */
+        static int n;
+        if (va == 0x872A0) {   /* speech state: timer [137BF8], id [137BFC], player [129C20], [137C00], [137C04] */
+            static uint32_t last[5];
+            uint32_t cur[5] = {RD32(0x137BF8), RD32(0x137BFC), RD32(0x129C20), RD32(0x137C04), RD32(0x129C2C)};
+            if (memcmp(cur + 1, last + 1, 16) || ((cur[0] != 0) != (last[0] != 0)))
+                LOG("[caption] speech t=%.1f timer %.2f id %X player %d c04 %X c2c %X\n", sched_now_100ns() / 1e7,
+                    *(float *)&cur[0], cur[1], (int)cur[2], cur[3], cur[4]);
+            memcpy(last, cur, sizeof cur);
+        }
+        if (va != 0x872A0 && n++ < 200) {
+            char str[64] = "";
+            uint32_t a0 = RD32(c->esp + 4);
+            if (a0 > 0x10000 && a0 < 0x4000000) { memcpy(str, g_mem + a0, 63); for (int i = 0; i < 63; i++) if (str[i] && (str[i] < 32 || str[i] > 126)) str[i] = '.'; }
+            LOG("[caption] %X t=%.1f args %08X %08X %08X %08X \"%s\"\n", va, sched_now_100ns() / 1e7, a0,
+                RD32(c->esp + 8), RD32(c->esp + 12), RD32(c->esp + 16), str);
+        }
+        return;
+    }
+    if (va == 0x20B80 || va == 0x20E00 || va == 0x95B00) {   /* text trace: each distinct (va, args, string) once */
+        static uint32_t seen[512][3];
+        static int ns;
+        uint32_t a[6];
+        for (int i = 0; i < 6; i++) a[i] = RD32(c->esp + 4 + i * 4);
+        char str[48] = "";
+        for (int i = 0; i < 6 && !str[0]; i++)
+            if (a[i] > 0x10000 && a[i] < 0x4000000 && g_mem[a[i]] >= 32 && g_mem[a[i]] < 127) {
+                int k = 0;
+                while (k < 47 && g_mem[a[i] + k] >= 32 && g_mem[a[i] + k] < 127) { str[k] = g_mem[a[i] + k]; k++; }
+                str[k] = 0;
+                if (k < 2) str[0] = 0;
+            }
+        uint32_t h = 2166136261u;
+        for (const char *q = str; *q; q++) h = (h ^ (uint8_t)*q) * 16777619u;
+        int dup = 0;
+        for (int i = 0; i < ns; i++) if (seen[i][0] == va && seen[i][1] == h && seen[i][2] == a[0]) { dup = 1; break; }
+        if (!dup && ns < 512) {
+            seen[ns][0] = va; seen[ns][1] = h; seen[ns][2] = a[0]; ns++;
+            LOG("[text] %X t=%.1f ecx %08X args %08X %08X %08X %08X %08X %08X \"%s\"\n", va, sched_now_100ns() / 1e7,
+                c->ecx, a[0], a[1], a[2], a[3], a[4], a[5], str);
+        }
+        return;
+    }
+    if (va == 0x77490) {   /* do_player_select: player states (+0xE8) and select-screen flags, logged on change */
+        static uint32_t last[6] = {9, 9, 9, 9, 9, 9};
+        uint32_t cur[6];
+        for (int i = 0; i < 4; i++) cur[i] = RD32(0xBB4F60 + i * 0x6140 + 0xE8);
+        cur[4] = RD32(0x136F84); cur[5] = RD32(0x136F7C);
+        {   /* slot animation table 136D60 + i*0x84: +0x18 blit, +0x1C state, +0x20 frame */
+            static uint32_t ls[4][3];
+            for (int i = 0; i < 4; i++) {
+                uint32_t b = 0x136D60 + i * 0x84, v[3] = {RD32(b + 0x18), RD32(b + 0x1C), RD32(b + 0x20)};
+                if (v[0] != ls[i][0] || v[1] != ls[i][1])
+                    LOG("[select] t=%.1f slot %d blit %08X state %X frame %X\n", sched_now_100ns() / 1e7, i, v[0], v[1], v[2]);
+                memcpy(ls[i], v, sizeof v);
+            }
+        }
+        if (memcmp(cur, last, sizeof cur)) {
+            LOG("[select] t=%.1f e8 %X %X %X %X  f84 %X f7c %X\n", sched_now_100ns() / 1e7, cur[0], cur[1], cur[2], cur[3], cur[4], cur[5]);
+            memcpy(last, cur, sizeof cur);
+        }
+        return;
+    }
+    if (va == 0x1BEA0) {   /* DoGoodWizard: level id, caption sound [133C20], timer [133C4C], [134128], [13412C], [BED368] */
+        static uint32_t last[6];
+        uint32_t cur[6] = {RD32(0xBED088), RD32(0x133C20), RD32(0x134128), RD32(0xBED368), RD32(0x133CBC), RD32(0x13412C)};
+        if (memcmp(cur, last, 20))
+            LOG("[wiz] t=%.1f level %X snd %X 134128 %X d368 %X cbc %X 13412c %08X\n", sched_now_100ns() / 1e7,
+                cur[0], cur[1], cur[2], cur[3], cur[4], cur[5]);
+        memcpy(last, cur, sizeof cur);
+        return;
+    }
+    if (va == 0x88E60 || va == 0x892D0 || va == 0x89720 || va == 0x256E0) {   /* help/event-camera trace */
+        static double lt[4] = {-99, -99, -99, -99};
+        int k = va == 0x88E60 ? 0 : va == 0x892D0 ? 1 : va == 0x89720 ? 2 : 3;
+        double now = sched_now_100ns() / 1e7;
+        if (now - lt[k] > 2.0) {
+            LOG("[help] %X t=%.1f args %08X %08X %08X %08X\n", va, now, RD32(c->esp + 4), RD32(c->esp + 8),
+                RD32(c->esp + 12), RD32(c->esp + 16));
+            lt[k] = now;
+        }
+        return;
+    }
     if (va == 0x1BA30) {   /* init_gamemovie(int id), cdecl: id 0x2C = "victory", 0x2B = "garm", else the level's
                             * movie (level data +0x34). Skipped while [136248] != 0, [1349F8] & 0x10 or [BD4C10] != 0. */
         LOG("[movie] init_gamemovie(%X) t=%.1f ret=%08X level %X skip %X %X %X\n", RD32(c->esp + 4),
             sched_now_100ns() / 1e7, RD32(c->esp), RD32(0xBED088), RD32(0x136248), RD32(0x1349F8), RD32(0xBD4C10));
+        /* the current world record [135638]: level count int16 +0x18, level records at [+0x1C] (stride 0x10C,
+         * name suffix at +8, level id at +0x44); listed once per world */
+        static int scanned;
+        if (!scanned++)   /* every level record in memory with a special id (most levels have -1) */
+            for (uint32_t r = 0x100000; r < 0x3F00000; r += 4) {
+                uint8_t *s = g_mem + r + 8;
+                if (s[0] < 'A' || s[0] > 'Z' || s[1] < '1' || s[1] > '9' || s[2]) continue;
+                int32_t id = (int32_t)RD32(r + 0x44);
+                if (id >= 0 && id < 0x60) LOG("[movie]   record %08X %s id %X\n", r, (const char *)s, id);
+            }
+        static uint32_t listed_world;
+        uint32_t w = RD32(0x135638);
+        if (w && w != listed_world) {
+            listed_world = w;
+            uint32_t r = RD32(w + 0x1C);
+            for (int i = 0, n = (int16_t)RD16(w + 0x18); i < n && i < 16; i++, r += 0x10C)
+                LOG("[movie]   level %d: %.8s id %X\n", i, (const char *)(g_mem + r + 8), RD32(r + 0x44));
+        }
         return;
     }
     if (va == 0x85E20 || va == 0x85CA0) {   /* PlayerHasShard / PlayerHasRune(int player (-1 = any), int bit or mask),
@@ -424,6 +525,7 @@ void x86_hle(X86Context *c, uint32_t va) {
         return;
     }
     case 0x10F199: /* HANDLE XInputOpen(type, DWORD port, DWORD slot, PXINPUT_POLLING_PARAMETERS) */
+        LOG("[pad] XInputOpen port %u slot %u t=%.1f\n", ARG(1), ARG(2), sched_now_100ns() / 1e7);
         ret_std(c, 4, ARG(1) < 4 && (pad_mask() >> ARG(1) & 1) ? PAD_HANDLE | ARG(1) : 0);
         return;
     case 0x10F1EF: /* VOID XInputClose(HANDLE) */

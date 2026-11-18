@@ -467,6 +467,29 @@ static ID3D11ShaderResourceView *create_texture(TexEntry *e, TexFmt f, int level
                 for (int y = 0; y < lh; y++)
                     for (int x = 0; x < lw; x++) out[y * lw + x] = texel(f.kind, base + y * pitch + x * f.bpp, pal);
             }
+            if (l == 0) {   /* GT_TEXDUMP=addr,addr,...: write those textures (level 0) to out/tex_<addr>.ppm (RGB + alpha) */
+                static const char *td = (const char *)-1;
+                if (td == (const char *)-1) td = getenv("GT_TEXDUMP");
+                char key[16];
+                snprintf(key, sizeof key, "%08X", e->addr);
+                if (td && strstr(td, key)) {
+                    char path[64];
+                    snprintf(path, sizeof path, "out/tex_%s.ppm", key);
+                    FILE *fp = fopen(path, "wb");
+                    if (fp) {
+                        fprintf(fp, "P6 %d %d 255\n", lw * 2, lh);
+                        for (int y = 0; y < lh; y++)
+                            for (int x = 0; x < lw * 2; x++) {
+                                uint32_t px = out[y * lw + (x % lw)];
+                                uint8_t a = px >> 24, rgb[3] = {px & 0xFF, (px >> 8) & 0xFF, (px >> 16) & 0xFF};
+                                if (x >= lw) rgb[0] = rgb[1] = rgb[2] = a;
+                                fwrite(rgb, 1, 3, fp);
+                            }
+                        fclose(fp);
+                        LOG("[gpu] texdump %s %dx%d kind %d\n", key, lw, lh, f.kind);
+                    }
+                }
+            }
             bufs[l] = out;
             init[l].pSysMem = out; init[l].SysMemPitch = lw * 4; init[l].SysMemSlicePitch = 0;
         }
@@ -931,6 +954,38 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
     }
     if ((size_t)nv * sizeof(KVertex) > VBUF_SIZE || (size_t)ni * 4 > IBUF_SIZE) return;
     bind_targets();
+    {   /* GT_DRAWSTACK=texaddr: for draws with that stage-0 texture, log (every 2 s) the guest stack's likely return
+         * addresses (.text values from the current guest thread's esp upward; X86Context is GThread's first member) */
+        static uint32_t ds = 1;
+        static double last;
+        if (ds == 1) { const char *e = getenv("GT_DRAWSTACK"); ds = e ? (uint32_t)strtoul(e, NULL, 16) : 0; }
+        if (ds && KREG(K_TEX_OFFSET(0)) == ds && sched_current()) {
+            double now = sched_now_100ns() / 1e7;
+            if (now - last > 2.0) {
+                last = now;
+                X86Context *gc = (X86Context *)sched_current();
+                char buf[512];
+                int n = 0, k = 0;
+                for (uint32_t a = gc->esp; a < gc->esp + 0x800 && k < 20; a += 4) {
+                    uint32_t v = RD32(a);
+                    if (v >= 0x11000 && v < 0xB0000 && g_mem[v - 5] == 0xE8) { n += snprintf(buf + n, sizeof buf - n, " %X", v); k++; }
+                }
+                LOG("[drawstack] t=%.1f esp %08X:%s\n", now, gc->esp, buf);
+            }
+        }
+    }
+    {   /* GT_DRAWLOG=N: log every draw of frame N (state + first vertex) */
+        static int dl = -1;
+        if (dl < 0) { const char *e = getenv("GT_DRAWLOG"); dl = e ? atoi(e) : 0; }
+        if (dl && (int)frame_no == dl)
+            LOG("[draw] t%d nv %u ni %u v0 %.1f %.1f %.4f %.3f d %.2f %.2f %.2f %.2f uv %.3f %.3f | blend %X %X/%X ztest %X zf %X zm %X cmask %08X atest %X/%X/%X stencil %X prog %08X tex0 %08X fmt %08X comb %X c0 %08X cicw %08X cocw %08X\n",
+                topo, nv, ni, v[0].a[0][0], v[0].a[0][1], v[0].a[0][2], v[0].a[0][3], v[0].a[3][0], v[0].a[3][1],
+                v[0].a[3][2], v[0].a[3][3], v[0].a[9][0], v[0].a[9][1], KREG(K_BLEND_EN), KREG(K_BLEND_SFACTOR),
+                KREG(K_BLEND_DFACTOR), KREG(K_DEPTH_TEST_EN), KREG(K_DEPTH_FUNC), KREG(K_DEPTH_MASK), KREG(K_COLOR_MASK),
+                KREG(K_ALPHA_TEST_EN), KREG(K_ALPHA_FUNC), KREG(K_ALPHA_REF), KREG(K_STENCIL_TEST_EN),
+                KREG(K_SHADER_STAGE_PROG), KREG(K_TEX_OFFSET(0)), KREG(K_TEX_FORMAT(0)), KREG(K_COMB_CONTROL),
+                KREG(K_COMB_FACTOR0), KREG(K_COMB_COLOR_ICW), KREG(K_COMB_COLOR_OCW));
+    }
 
     /* vertex constants */
     VSConst vc;

@@ -16,3 +16,17 @@
 85E20 PlayerHasShard
 85CA0 PlayerHasRune
 1BA30 init_gamemovie
+1B8B0 CaptionText
+1B670 CaptionTextSub
+1B980 CaptionTextReset
+872A0 SumnerDoSpeech
+85990 SumnerLevelSpeechStart
+20B80 DrawTextSub
+20E00 DrawStringTextSub
+95B00 MBDrawText
+77490 do_player_select
+1BEA0 DoGoodWizard
+88E60 write_text
+892D0 NewHelp
+89720 DoHelp
+256E0 MoveCam_event

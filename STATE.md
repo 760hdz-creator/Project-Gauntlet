@@ -277,9 +277,34 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   - The black frame with flaming axes is the game's screen saver (ScreenSaverStart 5A070, MESSAGE.OBJ) after
     ~10 min without input. Not a bug.
 
+- 2026-11-17: secret levels S1..S9 all load and return to their parent level (GT_EXITLIST runs over every
+  realm, then `python -I tools/make_secrets.py` route; out/run_secrets.log, run_secrets2.log). Secret exits:
+  C2 0C00 (S1), D3 0C01 (S2), A6 0C02 (S3), B2 0C03 (S4), H2 0C04 (S5), I1 0C05 (S6), J3 0C06 (S7),
+  G2 0C07 (S8), K2 0C08 (S9); exit 0x0C0n loads levelS(n+1). WDATA/SECRET.WAD names them Lab, Psychedelic,
+  Space, Gauntlet, Trenches, Docks, Henhouse, Crops, Cloud9. TEST.WAD = developer levels T*; TOWER.WAD lists
+  only levelL (L2/L3 = unused data). Hub pads past a realm's first are locked (c4=8000) until the earlier pads
+  are played. Level record ids (+0x44) are -1 except special levels (H4 = 0x2C).
+- 2026-11-17: user-reported missing text (both still open):
+  - Empty HUD player panels should say "Press START". The game issues no text call there (hooks on
+    DrawTextSub 20B80, DrawStringTextSub 20E00, MBDrawText 95B00 log every distinct string as `[text]`);
+    each empty panel draws only frame/tint/overlay blits (GT_DRAWLOG). GT_PADS=4 opens all four ports
+    (`[pad] XInputOpen`) but players 1..3 keep state +0xE8 = 0. In the binary, "Press START" (117468, 118684,
+    1265C4) is referenced only by do_flyby (attract), the title and do_player_select (77490: drawn for
+    players in state 3). The HUD prompt source is not found yet (setup_player_display 691B0 builds the HUD
+    from named blits "S3", "S4", "S4_FRAME", ...).
+  - The wizard cutscene after the intro scrolls (t~60-68) shows two black caption bars with no subtitle.
+    They are 8x8-black-texture blits (030F1000) flushed by the frame end (GauntletMain 56BCE -> 95FB0;
+    GT_DRAWSTACK=030F1000 logs the guest call chain). No text call happens in that window. CaptionText
+    (1B8B0) is only called from DoGoodWizard (1BEA0, not running here) and SumnerDoSpeech (872A0, timer 0).
+    Next: find who queues the bar blits (MB_BLIT create 930E0/92E50) and what it skips for the text.
+  - Debug aids added: GT_DRAWLOG=frame (per-draw state), GT_TEXDUMP=addr,... (out/tex_<addr>.ppm),
+    GT_DRAWSTACK=texaddr, hook logs [caption] [select] [wiz] [help] [pad]. Build check: grep `error` (clang),
+    not `error C`. Python heredocs that write C `\n` must use chr(92)+'n'.
+
 ## Next
-1. Levels L2/L3, T1..T4 and the secret S1..S9 levels; GARM movie (level id 0x2B) and the legend item movies. 
-   Check the white-player frames in A1. Watch for crashes, missed targets and the
+1. Missing text: "Press START" in empty HUD panels and the wizard subtitles in the cutscene bars (above).
+   Then test the other characters (routes only use the default hero), GARM movie (level id 0x2B) and the
+   legend item movies. Check the white-player frames in A1. Watch for crashes, missed targets and the
    one-time gpu warnings (fog: gpu_d3d11.c "fog not implemented"; lighting). Unresolved, low priority: walking onto
    pad III did not fire (dist 4.9-5.8); the targeted cheat bypasses it. Level timing drifts: use anchors.
 2. Fog (02A4/029C/09C0) and fixed-function lighting, when a level hits the one-time warnings.

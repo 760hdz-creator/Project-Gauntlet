@@ -123,6 +123,21 @@ static DWORD WINAPI watchdog(void *p) {
 
 void updater_start(void);
 
+/* settings.ini [settings] (written by the launcher): GT_* keys become environment variables unless already set,
+ * so the env still overrides for tests. */
+static void load_settings(void) {
+    wchar_t ini[MAX_PATH], buf[8192];
+    if (!GetFullPathNameW(L"settings.ini", MAX_PATH, ini, NULL)) return;
+    DWORD n = GetPrivateProfileSectionW(L"settings", buf, 8192, ini);
+    for (wchar_t *p = buf; p < buf + n && *p; p += wcslen(p) + 1) {
+        wchar_t *eq = wcschr(p, L'=');
+        if (!eq || wcsncmp(p, L"GT_", 3)) continue;
+        *eq = 0;
+        if (!_wgetenv(p)) _wputenv_s(p, eq + 1);
+        *eq = L'=';
+    }
+}
+
 int main(int argc, char **argv) {
     const char *xbe = argc > 1 ? argv[1] : "game/Default.xbe";
     if (argc <= 1 && GetFileAttributesA(xbe) == INVALID_FILE_ATTRIBUTES) {   /* installed: run from the exe's folder */
@@ -131,6 +146,7 @@ int main(int argc, char **argv) {
         while (n && dir[n - 1] != '\\') n--;
         if (n) { dir[n - 1] = 0; SetCurrentDirectoryA(dir); }
     }
+    load_settings();
     CreateDirectoryA("out", NULL);
     if (!GetConsoleWindow() && (GetStdHandle(STD_ERROR_HANDLE) == NULL ||
                                 GetStdHandle(STD_ERROR_HANDLE) == INVALID_HANDLE_VALUE))

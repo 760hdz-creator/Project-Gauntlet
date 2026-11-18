@@ -1,6 +1,6 @@
 # Renders the installer window to a PNG (PrintWindow, works behind other windows), then closes it.
-# usage: powershell -File installerpreview.ps1 <out.png> <setup.exe> [cropBottomPx]
-param([string]$Out, [string]$Exe, [int]$CropBottom = 0)
+# usage: powershell -File preview.ps1 <out.png> <setup.exe> [cropBottomPx] [exe arguments, e.g. "--launcher"]
+param([string]$Out, [string]$Exe, [int]$CropBottom = 0, [string]$ExeArgs = "")
 Add-Type @"
 using System; using System.Runtime.InteropServices;
 public class GtWin {
@@ -12,7 +12,7 @@ public class GtWin {
 "@
 Add-Type -AssemblyName System.Drawing
 [GtWin]::SetProcessDPIAware() | Out-Null
-$p = Start-Process $Exe -PassThru
+if ($ExeArgs) { $p = Start-Process $Exe -ArgumentList $ExeArgs -PassThru } else { $p = Start-Process $Exe -PassThru }
 Start-Sleep -Seconds 3
 $p.Refresh()
 $r = New-Object GtWin+RECT

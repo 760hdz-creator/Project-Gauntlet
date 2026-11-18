@@ -8,6 +8,6 @@ cd /d "%~dp0"
 set /p GT_VER=<..\VERSION
 python -I ..\tools\package.py || exit /b 1
 rc /nologo /fo setup.res setup.rc || exit /b 1
-clang-cl /nologo /O2 /DGT_SETUP_VERSION=\"%GT_VER%\" /std:c++20 /EHsc /MT /DUNICODE /D_UNICODE /D_CRT_SECURE_NO_WARNINGS setup.cpp setup.res /Fe:..\dist\ProjectGauntlet-Setup-%GT_VER%.exe /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib comctl32.lib comdlg32.lib shell32.lib ole32.lib uuid.lib windowscodecs.lib msimg32.lib advapi32.lib uxtheme.lib || exit /b 1
+clang-cl /nologo /O2 /DGT_SETUP_VERSION=\"%GT_VER%\" /std:c++20 /EHsc /MT /DUNICODE /D_UNICODE /D_CRT_SECURE_NO_WARNINGS setup.cpp setup.res /Fe:..\dist\ProjectGauntlet-Setup-%GT_VER%.exe /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib comctl32.lib comdlg32.lib shell32.lib ole32.lib uuid.lib winhttp.lib windowscodecs.lib msimg32.lib advapi32.lib uxtheme.lib || exit /b 1
 del setup.obj 2>nul
 echo Built dist\ProjectGauntlet-Setup-%GT_VER%.exe

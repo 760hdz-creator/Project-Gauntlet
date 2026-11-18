@@ -27,6 +27,22 @@ the game is lifted and compiled on the player's PC from their own disc image.
   `out\gauntlet.log` (no console), and relaunches itself on HalReturnToFirmware(1..3) (XAPI quick-reboots once on
   the first boot after it prepares the hard disk partitions).
 
+## Launcher (setup.cpp `--launcher`)
+- The install keeps a copy of the setup as `<install>\launcher.exe`; the desktop / Start menu shortcuts run
+  `launcher.exe --launcher` and the uninstall entry runs `launcher.exe --uninstall --dir <install>` (0.1.0 had
+  `uninstall.exe`, removed on update; an update also repoints existing shortcuts from `gauntlet.exe` to the launcher).
+- Window: Play (starts `gauntlet.exe` with GT_NOUPDATE=1 and closes), update check on open (forge releases/latest; a
+  newer tag shows Update: downloads the new setup to %TEMP%, runs `--update --dir <install>`, closes; the setup retries
+  copying over `launcher.exe` for 15 s), Display (fullscreen, widescreen, render scale, MSAA, anisotropic filtering,
+  gamepads), HD textures (on/off + pack folder with a PNG count), Uninstall.
+- Settings: `<install>\settings.ini`. `[settings]` holds GT_* variable names; `gauntlet.exe` (main.c load_settings)
+  sets each one that is not already in the environment, so env vars still win for tests. A default choice deletes
+  the key. `[launcher] HdFolder` remembers the pack folder while HD is off (GT_HDTEX=0).
+- HD pack: the picked folder is used in place (GT_HDTEX=<folder>, scanned recursively), never copied (2.1 GB). The setup
+  has the same optional picker (`--hd <folder>` on the command line). Uninstall never touches it.
+- Buttons and checkboxes are owner-drawn; labels use a pattern brush of the art. Preview:
+  `installer\preview.ps1 -Out x.png -Exe <install>\launcher.exe -ExeArgs --launcher`.
+
 ## Updates (runtime/src/updater.c)
 - At start (not with GT_INPUT, GT_NOUPDATE=1 or dev builds without GT_VERSION) a thread GETs
   `https://git.8gramlabs.com/api/v1/repos/8gramlabs/Project-Gauntlet/releases/latest`; a newer `tag_name` than
@@ -49,6 +65,14 @@ the game is lifted and compiled on the player's PC from their own disc image.
   keeps `out\`, deletes itself.
 - Installer window rendered with `installer\preview.ps1 <out.png> <setup.exe>`.
 
+- 2026-11-18 launcher: setup `--update --dir C:\Games\Project Gauntlet` over the 0.1.0 install (~55 s): launcher.exe
+  written, uninstall.exe removed, both shortcuts now `launcher.exe --launcher`, UninstallString updated. Launcher
+  rendered with ini values loaded (8x MSAA, fullscreen, 19634 PNG found); the installed game then logged scale 4,
+  msaa 8, widescreen 1.672, back buffer 3440x1440, hdtex 19633 textures from the pack folder. Update check against
+  the forge with no release (404) shows "Up to date".
+
 ## Open
+- Launcher not click-tested by hand (Play, Update download, Uninstall from the launcher, HD Browse); fresh install
+  with the HD picker not run.
 - Not run on a clean PC (toolchain install, file dialogs): test in Windows Sandbox.
 - Setup and game exe are unsigned (SmartScreen / Defender may warn).

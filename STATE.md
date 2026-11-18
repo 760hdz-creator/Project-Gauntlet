@@ -308,6 +308,12 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   40 s and exit (out/run_char*.log, out/shots_char*). Knight, Archer and Valkyrie shots show the player as a
   solid white silhouette in combat (same as the A1 "white player" note): hit flash or a combiner bug, unchecked.
 
+- 2026-11-17: stale image around loading screens fixed. The game draws 2D (HUD, loading splash/map, trigger-
+  camera bars) in the title-safe viewport x 32..611, y 16..463 (viewport offset 32.5/16.5) and its clears use that
+  rect (GT_CLEARLOG=1: flags F3 rect 02630020 01CF0010), so the 32/16 px border kept the last 3D frame; a TV hides
+  it as overscan. flip_impl now presents that safe area scaled to the 4:3 window (scissored); GT_OVERSCAN=0 shows
+  the full 640x480 surface. GT_SHOT still saves the full surface. The cutscene bars are now full-width.
+
 ## Next
 1. Missing text: "Press START" in empty HUD panels and the wizard subtitles in the cutscene bars (above).
    Then test the other characters (routes only use the default hero), GARM movie (level id 0x2B) and the

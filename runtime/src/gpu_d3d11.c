@@ -1080,6 +1080,12 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
 
 static void clear_impl(uint32_t flags) {
     if (!ready()) return;
+    {   /* GT_CLEARLOG=1: log clears (flags, rect, color, target) */
+        static int cl = -1;
+        if (cl < 0) { const char *e = getenv("GT_CLEARLOG"); cl = e && *e == '1'; }
+        if (cl) LOG("[clear] frame %u flags %X rect %08X %08X color %08X rt %08X%c", frame_no, flags, KREG(K_CLEAR_RECT_H),
+                    KREG(K_CLEAR_RECT_V), KREG(K_COLOR_CLEAR), KREG(K_COLOR_OFFSET), 10);
+    }
     bind_targets();
     if (flags & 0xF0) {
         float c[4];
@@ -1130,7 +1136,17 @@ static void present_srv(ID3D11ShaderResourceView *srv, float x, float y, float d
     ID3D11DeviceContext_RSSetViewports(ctx, 1, &vp);
     ID3D11DeviceContext_OMSetBlendState(ctx, NULL, NULL, 0xFFFFFFFF);
     ID3D11DeviceContext_OMSetDepthStencilState(ctx, NULL, 0);
-    ID3D11DeviceContext_RSSetState(ctx, NULL);
+    {   /* scissor to the 4:3 screen area: a cropped (overscan) destination extends past it */
+        static ID3D11RasterizerState *rs_scissor;
+        if (!rs_scissor) {
+            D3D11_RASTERIZER_DESC d = {0};
+            d.FillMode = D3D11_FILL_SOLID; d.CullMode = D3D11_CULL_NONE; d.DepthClipEnable = TRUE; d.ScissorEnable = TRUE;
+            ID3D11Device_CreateRasterizerState(dev, &d, &rs_scissor);
+        }
+        D3D11_RECT sr = {(LONG)((w - vw) / 2), (LONG)((h - vh) / 2), (LONG)((w + vw) / 2), (LONG)((h + vh) / 2)};
+        ID3D11DeviceContext_RSSetState(ctx, rs_scissor);
+        ID3D11DeviceContext_RSSetScissorRects(ctx, 1, &sr);
+    }
     ID3D11DeviceContext_IASetPrimitiveTopology(ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     ID3D11DeviceContext_IASetInputLayout(ctx, NULL);
     ID3D11DeviceContext_VSSetShader(ctx, blit_vs, NULL, 0);
@@ -1184,7 +1200,15 @@ static void flip_impl(uint32_t addr) {
     if (shot_every < 0) { const char *e = getenv("GT_SHOT"); shot_every = e ? atoi(e) : 0; }
     if (s && shot_every > 0 && frame_no % shot_every == 0) screenshot(s);
     if (s) {
-        present_srv(s->srv, 0, 0, 640, 480);
+        /* TV overscan: the game draws 2D (HUD, loading screens, cutscene bars) inside the title-safe viewport
+         * x 32..611, y 16..463 and its clears cover only that rect, so the border keeps stale frames that a TV hides.
+         * Show the safe area scaled to the window; GT_OVERSCAN=0 shows the whole 640x480 surface. */
+        static int overscan = -1;
+        if (overscan < 0) { const char *e = getenv("GT_OVERSCAN"); overscan = !(e && *e == '0'); }
+        if (overscan && s->w == 640 && s->h == 480)
+            present_srv(s->srv, -32.f * 640 / 580, -16.f * 480 / 448, 640.f * 640 / 580, 480.f * 480 / 448);
+        else
+            present_srv(s->srv, 0, 0, 640, 480);
     } else {
         static int warned;
         if (warned++ < 4) LOG("[gpu] flip: no surface at %08X\n", addr);

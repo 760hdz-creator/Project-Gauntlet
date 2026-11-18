@@ -20,7 +20,8 @@
 #include "kelvin.h"
 #include "hdtex.h"
 
-static int g_scale = 2;   /* GT_SCALE=1..8: host render-target scale over the guest resolution */
+static int g_scale = 0;   /* GT_SCALE=1..8: host render-target scale over the guest resolution; 0 = from the monitor */
+static int g_msaa = 4;    /* GT_MSAA=1/2/4/8: samples per pixel on host render targets */
 #define GPU_SCALE g_scale
 static int g_aniso = 16;  /* GT_ANISO=0/1..16: anisotropic filtering on minifying linear samplers */
 
@@ -36,10 +37,35 @@ static uint32_t frame_no;
 
 /* ---------------- window ---------------- */
 
+/* Borderless fullscreen on the window's monitor; F11 or Alt+Enter toggles, GT_FULLSCREEN=1 starts in it. */
+static void toggle_fullscreen(HWND h) {
+    static WINDOWPLACEMENT saved = {sizeof saved};
+    LONG st = GetWindowLongW(h, GWL_STYLE);
+    if (st & WS_OVERLAPPEDWINDOW) {
+        MONITORINFO mi = {sizeof mi};
+        GetWindowPlacement(h, &saved);
+        GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mi);
+        SetWindowLongW(h, GWL_STYLE, (st & ~WS_OVERLAPPEDWINDOW) | WS_POPUP);
+        SetWindowPos(h, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left,
+                     mi.rcMonitor.bottom - mi.rcMonitor.top, SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+    } else {
+        SetWindowLongW(h, GWL_STYLE, (st & ~WS_POPUP) | WS_OVERLAPPEDWINDOW);
+        SetWindowPlacement(h, &saved);
+        SetWindowPos(h, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+    }
+}
+
 static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
     case WM_CLOSE: LOG("[gpu] window closed\n"); ExitProcess(0);
-    case WM_KEYDOWN: if (w == VK_ESCAPE) { LOG("[gpu] escape\n"); ExitProcess(0); } break;
+    case WM_KEYDOWN:
+        if (w == VK_ESCAPE) { LOG("[gpu] escape\n"); ExitProcess(0); }
+        if (w == VK_F11) { toggle_fullscreen(h); return 0; }
+        break;
+    case WM_SYSKEYDOWN:
+        if (w == VK_RETURN && (l & (1 << 29))) { toggle_fullscreen(h); return 0; }
+        break;
+    case WM_SYSCHAR: if (w == VK_RETURN) return 0; break;   /* no beep on Alt+Enter */
     default: break;
     }
     return DefWindowProcW(h, m, w, l);
@@ -77,6 +103,7 @@ static DWORD WINAPI window_thread(LPVOID ev) {
     g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Gauntlet Dark Legacy (recomp)", WS_OVERLAPPEDWINDOW,
                              x, y, r.right - r.left, r.bottom - r.top, NULL, NULL, wc.hInstance, NULL);
     ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
+    if (getenv("GT_FULLSCREEN") && *getenv("GT_FULLSCREEN") == '1') toggle_fullscreen(g_hwnd);
     SetEvent((HANDLE)ev);
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0) { TranslateMessage(&msg); DispatchMessageW(&msg); }
@@ -140,11 +167,21 @@ typedef struct { float C0[8][4]; float C1[8][4]; float fogc[4]; float at[4]; flo
 typedef struct {
     uint32_t addr; int w, h;
     ID3D11Texture2D *tex; ID3D11RenderTargetView *rtv; ID3D11ShaderResourceView *srv;
+    ID3D11Texture2D *ms;   /* multisampled color (rtv points here when g_msaa > 1); resolved into tex on read */
+    int dirty;
     uint32_t last_frame;
 } Surface;
 typedef struct { uint32_t addr; int w, h; ID3D11Texture2D *tex; ID3D11DepthStencilView *dsv; } ZSurface;
 static Surface rts[16]; static int n_rts;
 static ZSurface zss[8]; static int n_zss;
+
+static void surface_resolve(Surface *s) {
+    if (s->ms && s->dirty) {
+        ID3D11DeviceContext_ResolveSubresource(ctx, (ID3D11Resource *)s->tex, 0, (ID3D11Resource *)s->ms, 0,
+                                               DXGI_FORMAT_B8G8R8A8_UNORM);
+        s->dirty = 0;
+    }
+}
 
 static Surface *find_rt(uint32_t addr) {
     for (int i = 0; i < n_rts; i++) if (rts[i].addr == addr) return &rts[i];
@@ -162,16 +199,21 @@ static Surface *get_rt(uint32_t addr, int w, int h) {
         } else s = &rts[n_rts++];
     }
     if (s->tex) { ID3D11Texture2D_Release(s->tex); ID3D11RenderTargetView_Release(s->rtv); ID3D11ShaderResourceView_Release(s->srv); }
+    if (s->ms) { ID3D11Texture2D_Release(s->ms); s->ms = NULL; }
     D3D11_TEXTURE2D_DESC d = {0};
     d.Width = w * GPU_SCALE; d.Height = h * GPU_SCALE; d.MipLevels = 1; d.ArraySize = 1;
     d.Format = DXGI_FORMAT_B8G8R8A8_UNORM; d.SampleDesc.Count = 1; d.Usage = D3D11_USAGE_DEFAULT;
     d.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
     ID3D11Device_CreateTexture2D(dev, &d, NULL, &s->tex);
-    ID3D11Device_CreateRenderTargetView(dev, (ID3D11Resource *)s->tex, NULL, &s->rtv);
+    if (g_msaa > 1) {
+        d.SampleDesc.Count = g_msaa; d.BindFlags = D3D11_BIND_RENDER_TARGET;
+        ID3D11Device_CreateTexture2D(dev, &d, NULL, &s->ms);
+    }
+    ID3D11Device_CreateRenderTargetView(dev, (ID3D11Resource *)(s->ms ? s->ms : s->tex), NULL, &s->rtv);
     ID3D11Device_CreateShaderResourceView(dev, (ID3D11Resource *)s->tex, NULL, &s->srv);
     float black[4] = {0, 0, 0, 1};
     ID3D11DeviceContext_ClearRenderTargetView(ctx, s->rtv, black);
-    s->addr = addr; s->w = w; s->h = h;
+    s->addr = addr; s->w = w; s->h = h; s->dirty = 1;
     LOG("[gpu] render target %08X %dx%d\n", addr, w, h);
     return s;
 }
@@ -184,7 +226,7 @@ static ZSurface *get_zs(uint32_t addr, int w, int h) {
     if (z->tex) { ID3D11Texture2D_Release(z->tex); ID3D11DepthStencilView_Release(z->dsv); }
     D3D11_TEXTURE2D_DESC d = {0};
     d.Width = w * GPU_SCALE; d.Height = h * GPU_SCALE; d.MipLevels = 1; d.ArraySize = 1;
-    d.Format = DXGI_FORMAT_D24_UNORM_S8_UINT; d.SampleDesc.Count = 1; d.Usage = D3D11_USAGE_DEFAULT;
+    d.Format = DXGI_FORMAT_D24_UNORM_S8_UINT; d.SampleDesc.Count = g_msaa; d.Usage = D3D11_USAGE_DEFAULT;
     d.BindFlags = D3D11_BIND_DEPTH_STENCIL;
     ID3D11Device_CreateTexture2D(dev, &d, NULL, &z->tex);
     ID3D11Device_CreateDepthStencilView(dev, (ID3D11Resource *)z->tex, NULL, &z->dsv);
@@ -211,6 +253,7 @@ static void bind_targets(void) {
     uint32_t caddr = (nv2a_dma_base(KREG(K_DMA_COLOR)) + KREG(K_COLOR_OFFSET)) & 0x03FFFFFF;
     cur_rt = get_rt(caddr, w, h);
     cur_rt->last_frame = frame_no;
+    cur_rt->dirty = 1;
     uint32_t zfmt = (KREG(K_SURF_FORMAT) >> 4) & 0xF;
     cur_zs = NULL;
     if (zfmt) {
@@ -244,6 +287,7 @@ static ID3D11Buffer *make_buffer(UINT size, UINT bind) {
 
 void gpu_init(void) {
     if (getenv("GT_SCALE")) { g_scale = atoi(getenv("GT_SCALE")); if (g_scale < 1) g_scale = 1; if (g_scale > 8) g_scale = 8; }
+    if (getenv("GT_MSAA")) { g_msaa = atoi(getenv("GT_MSAA")); if (g_msaa != 2 && g_msaa != 4 && g_msaa != 8) g_msaa = 1; }
     if (getenv("GT_ANISO")) { g_aniso = atoi(getenv("GT_ANISO")); if (g_aniso < 0) g_aniso = 0; if (g_aniso > 16) g_aniso = 16; }
     if (gpu_ok) return;
     gpu_ok = -1;
@@ -266,7 +310,28 @@ void gpu_init(void) {
     HRESULT hr = D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, flags, NULL, 0, D3D11_SDK_VERSION,
                                                &sd, &swap, &dev, NULL, &ctx);
     if (FAILED(hr)) { LOG("[gpu] D3D11CreateDeviceAndSwapChain failed %08lX\n", hr); return; }
+    if (!g_scale) {   /* auto: enough to cover the monitor's height (the 448-line safe area fills it) */
+        MONITORINFO mi = {sizeof mi};
+        GetMonitorInfoW(MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST), &mi);
+        int mh = mi.rcMonitor.bottom - mi.rcMonitor.top;
+        g_scale = (mh + 447) / 448;
+        if (g_scale < 2) g_scale = 2;
+        if (g_scale > 6) g_scale = 6;
+    }
+    if (g_msaa > 1) {
+        UINT q1 = 0, q2 = 0;
+        ID3D11Device_CheckMultisampleQualityLevels(dev, DXGI_FORMAT_B8G8R8A8_UNORM, g_msaa, &q1);
+        ID3D11Device_CheckMultisampleQualityLevels(dev, DXGI_FORMAT_D24_UNORM_S8_UINT, g_msaa, &q2);
+        if (!q1 || !q2) { LOG("[gpu] %dx MSAA not supported, off\n", g_msaa); g_msaa = 1; }
+    }
     make_bb_rtv();
+    {   /* Alt+Enter is ours (borderless), not DXGI's exclusive mode */
+        IDXGIFactory *fac = NULL;
+        if (SUCCEEDED(IDXGISwapChain_GetParent(swap, &IID_IDXGIFactory, (void **)&fac))) {
+            IDXGIFactory_MakeWindowAssociation(fac, g_hwnd, DXGI_MWA_NO_ALT_ENTER);
+            IDXGIFactory_Release(fac);
+        }
+    }
 
     ID3DBlob *b = compile(vs_src, "vs_5_0");
     if (!b) return;
@@ -302,7 +367,7 @@ void gpu_init(void) {
     smp.MaxLOD = D3D11_FLOAT32_MAX;
     ID3D11Device_CreateSamplerState(dev, &smp, &blit_sampler);
     gpu_ok = 1;
-    LOG("[gpu] D3D11 ready, scale %d, aniso %d\n", GPU_SCALE, g_aniso);
+    LOG("[gpu] D3D11 ready, scale %d, msaa %d, aniso %d, back buffer %ux%u\n", GPU_SCALE, g_msaa, g_aniso, bb_w, bb_h);
 }
 
 static int ready(void) {
@@ -576,7 +641,7 @@ static ID3D11ShaderResourceView *get_texture(int i, int *rect, int *tw, int *th)
     *tw = w; *th = h;
     /* render-to-texture: sample the host surface */
     Surface *s = find_rt(addr);
-    if (s) return s->srv;
+    if (s) { surface_resolve(s); return s->srv; }
 
     uint32_t pal_addr = 0, pal_len = 0;
     uint32_t palette[256];
@@ -1176,6 +1241,7 @@ static void present_srv(ID3D11ShaderResourceView *srv, float x, float y, float d
         ID3D11RenderTargetView_Release(bb_rtv);
         IDXGISwapChain_ResizeBuffers(swap, 0, cw, ch, DXGI_FORMAT_UNKNOWN, 0);
         make_bb_rtv();
+        LOG("[gpu] back buffer %ux%u\n", bb_w, bb_h);
     }
     float black[4] = {0, 0, 0, 1};
     ID3D11DeviceContext_ClearRenderTargetView(ctx, bb_rtv, black);
@@ -1248,6 +1314,7 @@ static void flip_impl(uint32_t addr) {
     if (!ready()) return;
     frame_no++;
     Surface *s = find_rt(addr);
+    if (s) surface_resolve(s);
     static int shot_every = -1;
     if (shot_every < 0) { const char *e = getenv("GT_SHOT"); shot_every = e ? atoi(e) : 0; }
     if (s && shot_every > 0 && frame_no % shot_every == 0) screenshot(s);

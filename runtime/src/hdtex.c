@@ -16,7 +16,7 @@
  * PNG alpha is GS scale too (0x80 = opaque); it is doubled on load. Files load on a worker thread (WIC) with a
  * CPU box-filtered mip chain; until a file is ready the original texture is drawn.
  * GT_HDTEX=<dir> picks the pack folder (default "textures" next to the exe), GT_HDTEX=0 turns it off,
- * GT_HDLOG=1 logs every lookup.
+ * GT_HDLOG=1 logs every lookup, GT_HDDEBUG=1 tints replaced textures magenta.
  */
 #define COBJMACROS
 #define WIN32_LEAN_AND_MEAN
@@ -42,7 +42,7 @@ static Entry *ents; static int n_ents, cap_ents;
 static char *pool; static size_t n_pool, cap_pool;
 static int *htab; static uint32_t hmask;      /* (tex0, clut, bits) -> entry, open addressing */
 static int *t0tab;                             /* (tex0, bits) -> entry or -2 when several files share it */
-static int g_enabled = -1, g_log;
+static int g_enabled = -1, g_log, g_debug;
 static char g_dir[MAX_PATH];
 
 static uint64_t mix(uint64_t a, uint64_t b, uint32_t c) {
@@ -130,6 +130,7 @@ static ID3D11ShaderResourceView *load_png(const char *path) {
     for (size_t i = 0, n = (size_t)w * h; i < n; i++) {   /* GS alpha (0x80 = 1.0) -> 8-bit */
         uint32_t c = lv[0][i], a = c >> 24;
         a = a >= 0x80 ? 255 : a * 2;
+        if (g_debug) c = (c & 0xFF00FF) | ((c >> 10) & 0x3F00);   /* GT_HDDEBUG=1: replaced textures turn magenta */
         lv[0][i] = (c & 0xFFFFFF) | a << 24;
     }
     D3D11_SUBRESOURCE_DATA init[16];
@@ -197,6 +198,7 @@ int hdtex_enabled(void) {
     g_enabled = 0;
     const char *env = getenv("GT_HDTEX");
     g_log = getenv("GT_HDLOG") && *getenv("GT_HDLOG") == '1';
+    g_debug = getenv("GT_HDDEBUG") && *getenv("GT_HDDEBUG") == '1';
     if (env && !strcmp(env, "0")) return 0;
     snprintf(g_dir, sizeof g_dir, "%s", env && *env ? env : "textures");
     DWORD t0 = GetTickCount();

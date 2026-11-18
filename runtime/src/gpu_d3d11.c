@@ -20,7 +20,9 @@
 #include "kelvin.h"
 #include "hdtex.h"
 
-#define GPU_SCALE 2
+static int g_scale = 2;   /* GT_SCALE=1..8: host render-target scale over the guest resolution */
+#define GPU_SCALE g_scale
+static int g_aniso = 16;  /* GT_ANISO=0/1..16: anisotropic filtering on minifying linear samplers */
 
 static HWND g_hwnd;
 static ID3D11Device *dev;
@@ -241,6 +243,8 @@ static ID3D11Buffer *make_buffer(UINT size, UINT bind) {
 }
 
 void gpu_init(void) {
+    if (getenv("GT_SCALE")) { g_scale = atoi(getenv("GT_SCALE")); if (g_scale < 1) g_scale = 1; if (g_scale > 8) g_scale = 8; }
+    if (getenv("GT_ANISO")) { g_aniso = atoi(getenv("GT_ANISO")); if (g_aniso < 0) g_aniso = 0; if (g_aniso > 16) g_aniso = 16; }
     if (gpu_ok) return;
     gpu_ok = -1;
     gpu_tid = GetCurrentThreadId();
@@ -298,7 +302,7 @@ void gpu_init(void) {
     smp.MaxLOD = D3D11_FLOAT32_MAX;
     ID3D11Device_CreateSamplerState(dev, &smp, &blit_sampler);
     gpu_ok = 1;
-    LOG("[gpu] D3D11 ready, scale %d\n", GPU_SCALE);
+    LOG("[gpu] D3D11 ready, scale %d, aniso %d\n", GPU_SCALE, g_aniso);
 }
 
 static int ready(void) {
@@ -675,6 +679,7 @@ static ID3D11SamplerState *get_sampler(int i) {
     d.Filter = (D3D11_FILTER)((min_lin ? 0x10 : 0) | (mag_lin ? 0x4 : 0) | (mip_lin ? 0x1 : 0));
     d.AddressU = addr_mode(a & 0xF); d.AddressV = addr_mode((a >> 8) & 0xF); d.AddressW = addr_mode((a >> 16) & 0xF);
     d.MaxAnisotropy = 1;
+    if (g_aniso > 1 && min_lin && mag_lin && mips) { d.Filter = D3D11_FILTER_ANISOTROPIC; d.MaxAnisotropy = g_aniso; }
     d.ComparisonFunc = D3D11_COMPARISON_NEVER;
     d.BorderColor[0] = ((b >> 16) & 0xFF) / 255.f; d.BorderColor[1] = ((b >> 8) & 0xFF) / 255.f;
     d.BorderColor[2] = (b & 0xFF) / 255.f; d.BorderColor[3] = (b >> 24) / 255.f;
@@ -1214,9 +1219,10 @@ static void screenshot(Surface *s) {
     ID3D11DeviceContext_CopyResource(ctx, (ID3D11Resource *)st, (ID3D11Resource *)s->tex);
     D3D11_MAPPED_SUBRESOURCE m;
     if (SUCCEEDED(ID3D11DeviceContext_Map(ctx, (ID3D11Resource *)st, 0, D3D11_MAP_READ, 0, &m))) {
-        char path[64];
-        CreateDirectoryA("out\\shots", NULL);
-        snprintf(path, sizeof path, "out\\shots\\f%05u_t%05.1f.bmp", frame_no, sched_now_100ns() / 1e7);
+        char path[MAX_PATH];
+        const char *dir = getenv("GT_SHOTDIR") ? getenv("GT_SHOTDIR") : "out\\shots";   /* GT_SHOTDIR=<dir> */
+        CreateDirectoryA(dir, NULL);
+        snprintf(path, sizeof path, "%s\\f%05u_t%05.1f.bmp", dir, frame_no, sched_now_100ns() / 1e7);
         FILE *f = fopen(path, "wb");
         if (f) {
             uint32_t w = d.Width, h = d.Height, sz = w * h * 4;

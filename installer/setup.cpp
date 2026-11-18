@@ -43,7 +43,8 @@ static const wchar_t kShortcut[] = L"Project Gauntlet.lnk";
 
 enum { ID_ISO_EDIT = 200, ID_ISO_BROWSE, ID_DIR_EDIT, ID_DIR_BROWSE, ID_DESKTOP, ID_STARTMENU, ID_INSTALL, ID_PROGRESS,
        ID_STATUS, ID_HD_EDIT, ID_HD_BROWSE, ID_HD_USE, ID_HD_STATUS, ID_PLAY, ID_UPDATE, ID_UNINSTALL, ID_FULLSCREEN,
-       ID_WIDESCREEN, ID_SCALE, ID_MSAA, ID_ANISO, ID_PADS };
+       ID_WIDESCREEN, ID_SCALE, ID_MSAA, ID_ANISO, ID_PADS, ID_SHARPEN, ID_FXAA, ID_CRT, ID_CONTROLS, ID_CTL_BACK,
+       ID_CTL_DEFAULTS, ID_KEY0 = 2000, ID_PADM0 = 2100 };
 #define WM_APP_STATUS (WM_APP + 1)
 #define WM_APP_PROGRESS (WM_APP + 2)
 #define WM_APP_DONE (WM_APP + 3)
@@ -473,9 +474,11 @@ static const Choice kMsaa[] = {{L"Off", L"1"}, {L"2x MSAA", L"2"}, {L"4x MSAA (d
 static const Choice kAniso[] = {{L"Trilinear", L"1"}, {L"2x anisotropic", L"2"}, {L"4x anisotropic", L"4"},
                                 {L"8x anisotropic", L"8"}, {L"16x anisotropic (default)", nullptr}};
 static const Choice kPads[] = {{L"1 (default)", nullptr}, {L"2", L"2"}, {L"3", L"3"}, {L"4", L"4"}};
+static const Choice kSharpen[] = {{L"Off (default)", nullptr}, {L"Low", L"30"}, {L"Medium", L"60"}, {L"High", L"100"}};
 struct ComboSetting { int id; const wchar_t* key; const Choice* c; int n; };
 static const ComboSetting kCombos[] = {{ID_SCALE, L"GT_SCALE", kScale, 6}, {ID_MSAA, L"GT_MSAA", kMsaa, 4},
-                                       {ID_ANISO, L"GT_ANISO", kAniso, 5}, {ID_PADS, L"GT_PADS", kPads, 4}};
+                                       {ID_ANISO, L"GT_ANISO", kAniso, 5}, {ID_PADS, L"GT_PADS", kPads, 4},
+                                       {ID_SHARPEN, L"GT_SHARPEN", kSharpen, 4}};
 
 static void UpdateHdStatus() {
     if (!g_hdStatus) return;
@@ -498,6 +501,8 @@ static void LoadSettings() {
     }
     SetOn(ID_FULLSCREEN, IniGet(g_instDir, L"settings", L"GT_FULLSCREEN") == L"1");
     SetOn(ID_WIDESCREEN, IniGet(g_instDir, L"settings", L"GT_WIDESCREEN") != L"0");
+    SetOn(ID_FXAA, IniGet(g_instDir, L"settings", L"GT_FXAA") == L"1");
+    SetOn(ID_CRT, IniGet(g_instDir, L"settings", L"GT_CRT") == L"1");
     std::wstring tex = IniGet(g_instDir, L"settings", L"GT_HDTEX"), folder = IniGet(g_instDir, L"launcher", L"HdFolder");
     if (folder.empty() && tex != L"0") folder = tex;
     SetOn(ID_HD_USE, tex != L"0");
@@ -511,6 +516,8 @@ static void SaveSettings() {
     }
     IniSet(g_instDir, L"settings", L"GT_FULLSCREEN", IsOn(ID_FULLSCREEN) ? L"1" : L"");
     IniSet(g_instDir, L"settings", L"GT_WIDESCREEN", IsOn(ID_WIDESCREEN) ? L"" : L"0");
+    IniSet(g_instDir, L"settings", L"GT_FXAA", IsOn(ID_FXAA) ? L"1" : L"");
+    IniSet(g_instDir, L"settings", L"GT_CRT", IsOn(ID_CRT) ? L"1" : L"");
     std::wstring folder = GetText(g_hd);
     IniSet(g_instDir, L"launcher", L"HdFolder", folder);
     IniSet(g_instDir, L"settings", L"GT_HDTEX", !IsOn(ID_HD_USE) ? L"0" : folder);
@@ -570,6 +577,100 @@ static HBITMAP LoadArt(int w, int h) {
     return bmp;
 }
 
+
+// ---- controls page (settings.ini GT_KEYS / GT_PADMAP, read by the game's hle.c) ----
+static const wchar_t* kActNames[18] = {L"D-pad up", L"D-pad down", L"D-pad left", L"D-pad right", L"START", L"BACK",
+                                       L"A", L"B", L"X", L"Y", L"Black", L"White", L"Left trigger", L"Right trigger",
+                                       L"Move up", L"Move down", L"Move left", L"Move right"};
+static const int kKeyDef[18] = {VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT, VK_RETURN, VK_BACK, 'Z', 'X', 'C', 'V', 'F', 'G',
+                                'Q', 'E', 'W', 'S', 'A', 'D'};
+static const int kPadDef[14] = {0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 9, 8, 16, 17};
+struct PadSrc { const wchar_t* label; int v; };   // v: XInput wButtons bit, 16 LT, 17 RT, 18 none
+static const PadSrc kSrc[] = {{L"D-pad up", 0}, {L"D-pad down", 1}, {L"D-pad left", 2}, {L"D-pad right", 3},
+                              {L"START", 4}, {L"BACK", 5}, {L"Left stick click", 6}, {L"Right stick click", 7},
+                              {L"LB", 8}, {L"RB", 9}, {L"A", 12}, {L"B", 13}, {L"X", 14}, {L"Y", 15}, {L"LT", 16},
+                              {L"RT", 17}, {L"(none)", 18}};
+static const int kNumSrc = sizeof kSrc / sizeof kSrc[0];
+static int g_keys[18], g_padm[14], g_capture = -1, g_page;
+static std::vector<HWND> g_pageCtl[2];
+static std::vector<bool> g_mainVis;
+
+static std::wstring KeyName(int vk) {
+    if (!vk) return L"(none)";
+    LONG l = (LONG)MapVirtualKeyW(vk, MAPVK_VK_TO_VSC) << 16;
+    switch (vk) {
+    case VK_LEFT: case VK_RIGHT: case VK_UP: case VK_DOWN: case VK_PRIOR: case VK_NEXT: case VK_END: case VK_HOME:
+    case VK_INSERT: case VK_DELETE: case VK_DIVIDE: case VK_NUMLOCK: case VK_RCONTROL: case VK_RMENU: l |= 1 << 24;
+    }
+    wchar_t b[64];
+    if (GetKeyNameTextW(l, b, 64) > 0) return b;
+    swprintf(b, 64, L"Key %02X", vk);
+    return b;
+}
+static void LoadMaps() {
+    std::copy(kKeyDef, kKeyDef + 18, g_keys);
+    std::copy(kPadDef, kPadDef + 14, g_padm);
+    auto parse = [](const std::wstring& s, int* dst, int n, int base, int max) {
+        if (s.empty()) return;
+        std::vector<int> v;
+        const wchar_t* p = s.c_str();
+        while (*p) {
+            wchar_t* e;
+            long x = wcstol(p, &e, base);
+            if (e == p || x < 0 || x > max) return;
+            v.push_back((int)x);
+            if (*e != L',') break;
+            p = e + 1;
+        }
+        if ((int)v.size() == n) std::copy(v.begin(), v.end(), dst);
+    };
+    parse(IniGet(g_instDir, L"settings", L"GT_KEYS"), g_keys, 18, 16, 255);
+    parse(IniGet(g_instDir, L"settings", L"GT_PADMAP"), g_padm, 14, 10, 18);
+}
+static void SaveMaps() {
+    std::wstring k, p;
+    for (int i = 0; i < 18; i++) { wchar_t b[8]; swprintf(b, 8, i ? L",%X" : L"%X", g_keys[i]); k += b; }
+    for (int i = 0; i < 14; i++) p += (i ? L"," : L"") + std::to_wstring(g_padm[i]);
+    IniSet(g_instDir, L"settings", L"GT_KEYS", std::equal(g_keys, g_keys + 18, kKeyDef) ? L"" : k);
+    IniSet(g_instDir, L"settings", L"GT_PADMAP", std::equal(g_padm, g_padm + 14, kPadDef) ? L"" : p);
+}
+static void RefreshMaps() {
+    for (int i = 0; i < 18; i++)
+        SetDlgItemTextW(g_wnd, ID_KEY0 + i, i == g_capture ? L"Press a key..." : KeyName(g_keys[i]).c_str());
+    for (int i = 0; i < 14; i++) {
+        int sel = kNumSrc - 1;
+        for (int k = 0; k < kNumSrc; k++) if (kSrc[k].v == g_padm[i]) sel = k;
+        SendDlgItemMessageW(g_wnd, ID_PADM0 + i, CB_SETCURSEL, sel, 0);
+    }
+}
+// Esc cancels; F8 / F11 are the game's own keys. A key bound elsewhere moves to this action.
+static void CaptureKey(int vk) {
+    int row = g_capture;
+    g_capture = -1;
+    if (vk != VK_ESCAPE && vk != VK_F8 && vk != VK_F11) {
+        for (int i = 0; i < 18; i++) if (g_keys[i] == vk) g_keys[i] = 0;
+        g_keys[row] = vk;
+        SaveMaps();
+    }
+    RefreshMaps();
+}
+static void RebuildArt();
+static void ShowPage(int page) {
+    if (page == g_page) return;
+    if (page == 1) {
+        g_mainVis.clear();
+        for (HWND c : g_pageCtl[0]) { g_mainVis.push_back(IsWindowVisible(c) != 0); ShowWindow(c, SW_HIDE); }
+        for (HWND c : g_pageCtl[1]) ShowWindow(c, SW_SHOW);
+    } else {
+        for (HWND c : g_pageCtl[1]) ShowWindow(c, SW_HIDE);
+        for (size_t i = 0; i < g_pageCtl[0].size(); i++) ShowWindow(g_pageCtl[0][i], g_mainVis[i] ? SW_SHOW : SW_HIDE);
+    }
+    g_page = page;
+    g_capture = -1;
+    RebuildArt();
+    SetFocus(GetDlgItem(g_wnd, page ? ID_CTL_BACK : ID_PLAY));
+}
+
 // The art with the darkened panel painted in (kept in g_artDC; WM_PAINT copies it).
 static void BuildArt(int w, int h) {
     HDC screen = GetDC(nullptr);
@@ -601,15 +702,34 @@ static void BuildArt(int w, int h) {
         TextOutW(g_artDC, S(x), S(y), s.c_str(), (int)s.size());
     };
     int x = kPanel.left + 30, t = kPanel.top;
+    if (g_launcher && g_page == 1) {
+        text(x, t + 24, g_titleFont, kAccent, L"Controls");
+        text(x, t + 84, g_smallFont, kDim, L"Click a key, then press the new one (Esc cancels). Saved at once.");
+        text(x, t + 124, g_font, kAccent, L"Action");
+        text(x + 250, t + 124, g_font, kAccent, L"Keyboard");
+        text(x + 450, t + 124, g_font, kAccent, L"Gamepad button");
+        for (int i = 0; i < 18; i++) {
+            text(x, t + 168 + i * 32, g_smallFont, kText, kActNames[i]);
+            if (i >= 14) text(x + 450, t + 168 + i * 32, g_smallFont, kDim, L"Left stick");
+        }
+        return;
+    }
     if (g_launcher) {
         text(x, t + 24, g_titleFont, kAccent, L"Project Gauntlet");
-        text(x, t + 84, g_smallFont, kDim, L"Version " + std::wstring(kVersion) + L"   " + g_instDir);
+        {   // long install paths end in an ellipsis inside the panel
+            std::wstring v = L"Version " + std::wstring(kVersion) + L"   " + g_instDir;
+            SelectObject(g_artDC, g_smallFont);
+            SetTextColor(g_artDC, kDim);
+            RECT r = {S(x), S(t + 84), S(kPanel.right - 20), S(t + 120)};
+            DrawTextW(g_artDC, v.data(), (int)v.size(), &r, DT_SINGLELINE | DT_PATH_ELLIPSIS | DT_NOPREFIX);
+        }
         text(x, t + 262, g_font, kAccent, L"Display");
-        text(x, t + 358, g_font, kText, L"Resolution");
-        text(x, t + 408, g_font, kText, L"Anti-aliasing");
-        text(x, t + 458, g_font, kText, L"Texture filtering");
-        text(x, t + 508, g_font, kText, L"Players (gamepads)");
-        text(x, t + 568, g_font, kAccent, L"HD textures");
+        text(x, t + 382, g_font, kText, L"Resolution");
+        text(x, t + 426, g_font, kText, L"Anti-aliasing");
+        text(x, t + 470, g_font, kText, L"Texture filtering");
+        text(x, t + 514, g_font, kText, L"Sharpening");
+        text(x, t + 558, g_font, kText, L"Players (gamepads)");
+        text(x, t + 608, g_font, kAccent, L"HD textures");
         return;
     }
     text(x, t + 24, g_titleFont, kAccent, g_updating ? L"Update Project Gauntlet" : L"Install Project Gauntlet");
@@ -748,7 +868,25 @@ static void Launch(const std::wstring& dir) {
 }
 
 static bool LauncherCommand(HWND h, int id, int code) {
+    if (id >= ID_KEY0 && id < ID_KEY0 + 18) {
+        if (code == BN_CLICKED) { g_capture = id - ID_KEY0; RefreshMaps(); }
+        return true;
+    }
+    if (id >= ID_PADM0 && id < ID_PADM0 + 14) {
+        int sel = (int)SendDlgItemMessageW(h, id, CB_GETCURSEL, 0, 0);
+        if (code == CBN_SELCHANGE && sel >= 0 && sel < kNumSrc) { g_padm[id - ID_PADM0] = kSrc[sel].v; SaveMaps(); }
+        return true;
+    }
     switch (id) {
+    case ID_CONTROLS: ShowPage(1); return true;
+    case ID_CTL_BACK: ShowPage(0); return true;
+    case ID_CTL_DEFAULTS:
+        std::copy(kKeyDef, kKeyDef + 18, g_keys);
+        std::copy(kPadDef, kPadDef + 14, g_padm);
+        g_capture = -1;
+        SaveMaps();
+        RefreshMaps();
+        return true;
     case ID_PLAY:
         SaveSettings();
         if (PlayGame()) DestroyWindow(h);
@@ -767,10 +905,10 @@ static bool LauncherCommand(HWND h, int id, int code) {
     case ID_HD_EDIT:
         if (code == EN_KILLFOCUS) { UpdateHdStatus(); SaveSettings(); }
         return true;
-    case ID_FULLSCREEN: case ID_WIDESCREEN: case ID_HD_USE:
+    case ID_FULLSCREEN: case ID_WIDESCREEN: case ID_HD_USE: case ID_FXAA: case ID_CRT:
         if (code == BN_CLICKED) SaveSettings();
         return true;
-    case ID_SCALE: case ID_MSAA: case ID_ANISO: case ID_PADS:
+    case ID_SCALE: case ID_MSAA: case ID_ANISO: case ID_PADS: case ID_SHARPEN:
         if (code == CBN_SELCHANGE) SaveSettings();
         return true;
     }
@@ -873,8 +1011,17 @@ static std::wstring DefaultDir() {
     return KnownDir(FOLDERID_LocalAppData) + L"\\Project Gauntlet";
 }
 
-static void MakeCombo(int id, const Choice* c, int n, int x, int y, int w) {
-    HWND cb = Make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, id, x, y, w, 300);
+static void RebuildArt() {
+    DeleteDC(g_artDC);
+    DeleteObject(g_artBmp);
+    BuildArt(S(kArtW), S(kArtH));
+    DeleteObject(g_artBrush);
+    g_artBrush = CreatePatternBrush(g_artBmp);
+    RedrawWindow(g_wnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+}
+
+static void MakeCombo(int id, const Choice* c, int n, int x, int y, int w, HFONT font = nullptr) {
+    HWND cb = Make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, id, x, y, w, 300, font);
     SetWindowTheme(cb, L"", L"");
     for (int i = 0; i < n; i++) SendMessageW(cb, CB_ADDSTRING, 0, (LPARAM)c[i].label);
 }
@@ -885,18 +1032,43 @@ static void CreateLauncherControls() {
     g_updBtn = Make(L"BUTTON", L"Update", BS_PUSHBUTTON | WS_TABSTOP, ID_UPDATE, x + 260, t + 130, 200, 64);
     ShowWindow(g_updBtn, SW_HIDE);
     g_status = Make(L"STATIC", L"Checking for updates...", SS_LEFT, ID_STATUS, x, t + 205, fw, 50, g_smallFont);
-    MakeCheck(L"Fullscreen (F11 toggles)", ID_FULLSCREEN, x, t + 302, 300);
-    MakeCheck(L"Widescreen", ID_WIDESCREEN, x + 320, t + 302, 300);
-    MakeCombo(ID_SCALE, kScale, 6, cx, t + 352, cw);
-    MakeCombo(ID_MSAA, kMsaa, 4, cx, t + 402, cw);
-    MakeCombo(ID_ANISO, kAniso, 5, cx, t + 452, cw);
-    MakeCombo(ID_PADS, kPads, 4, cx, t + 502, cw);
-    g_hdUse = MakeCheck(L"Use the HD texture pack", ID_HD_USE, x, t + 608, 400);
-    g_hd = Make(L"EDIT", L"", ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP, ID_HD_EDIT, x, t + 650, fw - 130, 38);
-    Make(L"BUTTON", L"Browse...", BS_PUSHBUTTON | WS_TABSTOP, ID_HD_BROWSE, x + fw - 120, t + 650, 120, 38);
-    g_hdStatus = Make(L"STATIC", L"", SS_LEFT, ID_HD_STATUS, x, t + 700, fw - 190, 60, g_smallFont);
-    Make(L"BUTTON", L"Uninstall", BS_PUSHBUTTON | WS_TABSTOP, ID_UNINSTALL, x + fw - 170, t + 715, 170, 40, g_smallFont);
+    MakeCheck(L"Fullscreen (F11 toggles)", ID_FULLSCREEN, x, t + 296, 300);
+    MakeCheck(L"Widescreen", ID_WIDESCREEN, x + 320, t + 296, 300);
+    MakeCheck(L"FXAA (smooths edges)", ID_FXAA, x, t + 334, 300);
+    MakeCheck(L"CRT scanlines", ID_CRT, x + 320, t + 334, 300);
+    MakeCombo(ID_SCALE, kScale, 6, cx, t + 376, cw);
+    MakeCombo(ID_MSAA, kMsaa, 4, cx, t + 420, cw);
+    MakeCombo(ID_ANISO, kAniso, 5, cx, t + 464, cw);
+    MakeCombo(ID_SHARPEN, kSharpen, 4, cx, t + 508, cw);
+    MakeCombo(ID_PADS, kPads, 4, cx, t + 552, cw);
+    g_hdUse = MakeCheck(L"Use the HD texture pack", ID_HD_USE, x, t + 646, 400);
+    g_hd = Make(L"EDIT", L"", ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP, ID_HD_EDIT, x, t + 686, fw - 130, 38);
+    Make(L"BUTTON", L"Browse...", BS_PUSHBUTTON | WS_TABSTOP, ID_HD_BROWSE, x + fw - 120, t + 686, 120, 38);
+    g_hdStatus = Make(L"STATIC", L"", SS_LEFT, ID_HD_STATUS, x, t + 734, fw - 190, 50, g_smallFont);
+    Make(L"BUTTON", L"Uninstall", BS_PUSHBUTTON | WS_TABSTOP, ID_UNINSTALL, x + fw - 170, t + 740, 170, 40, g_smallFont);
+    Make(L"BUTTON", L"Controls", BS_PUSHBUTTON | WS_TABSTOP, ID_CONTROLS, x + fw - 200, t + 130, 200, 64);
     LoadSettings();
+    // controls page, hidden until Controls is clicked
+    auto children = [] {
+        std::vector<HWND> v;
+        EnumChildWindows(g_wnd, [](HWND c, LPARAM p) { ((std::vector<HWND>*)p)->push_back(c); return TRUE; }, (LPARAM)&v);
+        return v;
+    };
+    g_pageCtl[0] = children();
+    for (int i = 0; i < 18; i++)
+        Make(L"BUTTON", L"", BS_PUSHBUTTON | WS_TABSTOP, ID_KEY0 + i, x + 250, t + 164 + i * 32, 180, 30, g_smallFont);
+    std::vector<Choice> src;
+    for (auto& s : kSrc) src.push_back({s.label, nullptr});
+    for (int i = 0; i < 14; i++) MakeCombo(ID_PADM0 + i, src.data(), kNumSrc, x + 450, t + 164 + i * 32, fw - 450, g_smallFont);
+    Make(L"BUTTON", L"Defaults", BS_PUSHBUTTON | WS_TABSTOP, ID_CTL_DEFAULTS, x, t + 745, 170, 40, g_smallFont);
+    Make(L"BUTTON", L"Back", BS_PUSHBUTTON | WS_TABSTOP, ID_CTL_BACK, x + fw - 170, t + 745, 170, 40, g_smallFont);
+    for (HWND c : children())
+        if (std::find(g_pageCtl[0].begin(), g_pageCtl[0].end(), c) == g_pageCtl[0].end()) {
+            g_pageCtl[1].push_back(c);
+            ShowWindow(c, SW_HIDE);
+        }
+    LoadMaps();
+    RefreshMaps();
     SetFocus(play);
 }
 
@@ -1009,6 +1181,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     }
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0)) {
+        if (g_capture >= 0 && (msg.message == WM_KEYDOWN || msg.message == WM_SYSKEYDOWN)) {
+            CaptureKey((int)msg.wParam);
+            continue;
+        }
         if (!IsDialogMessageW(g_wnd, &msg)) { TranslateMessage(&msg); DispatchMessageW(&msg); }
     }
     // launcher: an update check still waiting on the network must not keep the process alive

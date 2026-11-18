@@ -351,7 +351,45 @@ static int our_focus(void) {
     GetWindowThreadProcessId(f, &pid);
     return pid == GetCurrentProcessId();
 }
-static int key(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
+static int key(int vk) { return vk && (GetAsyncKeyState(vk) & 0x8000) != 0; }
+
+/* Remapping (the launcher writes these to settings.ini):
+ * GT_KEYS = 18 hex virtual-key codes, 0 = unbound, in the order D-pad up/down/left/right, START, BACK, A, B, X, Y,
+ *   Black, White, LT, RT, left stick up/down/left/right.
+ * GT_PADMAP = 14 host sources for D-pad up/down/left/right, START, BACK, A, B, X, Y, Black, White, LT, RT:
+ *   0..15 = XInput wButtons bit, 16 = left trigger, 17 = right trigger, 18 = none. Stick clicks and sticks are fixed. */
+static int kb_map[18] = {VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT, VK_RETURN, VK_BACK, 'Z', 'X', 'C', 'V', 'F', 'G', 'Q', 'E',
+                         'W', 'S', 'A', 'D'};
+static int pad_map[14] = {0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 9, 8, 16, 17};
+static void parse_map(const char *name, int *dst, int n, int max) {
+    const char *e = getenv(name);
+    if (!e || !*e) return;
+    int v[18], k = 0;
+    for (const char *p = e; k < n;) {
+        char *end;
+        long x = strtol(p, &end, name[3] == 'K' ? 16 : 10);
+        if (end == p || x < 0 || x > max) return;
+        v[k++] = (int)x;
+        if (*end != ',') break;
+        p = end + 1;
+    }
+    if (k != n) { LOG("[input] %s ignored: needs %d values\n", name, n); return; }
+    memcpy(dst, v, sizeof *dst * n);
+    LOG("[input] %s applied\n", name);
+}
+static void maps_init(void) {
+    static int done;
+    if (done) return;
+    done = 1;
+    parse_map("GT_KEYS", kb_map, 18, 255);
+    parse_map("GT_PADMAP", pad_map, 14, 18);
+}
+static int pad_src(const HostState *h, int s) {
+    if (s < 16) return h->Gamepad.wButtons & (1u << s) ? 255 : 0;
+    if (s == 16) return h->Gamepad.bLeftTrigger;
+    if (s == 17) return h->Gamepad.bRightTrigger;
+    return 0;
+}
 
 /* XINPUT_STATE: dwPacketNumber, wButtons, bAnalogButtons[8] (A B X Y BLACK WHITE LT RT), sThumbLX LY RX RY */
 static void fill_state(uint32_t dst, int port) {
@@ -359,30 +397,23 @@ static void fill_state(uint32_t dst, int port) {
     memset(&h, 0, sizeof h);
     host_xinput_init();
     if (host_xinput_get_state) host_xinput_get_state((DWORD)port, &h);
+    maps_init();
     uint16_t b = h.Gamepad.wButtons;
-    uint16_t buttons = (b & 0x000F)              /* dpad up/down/left/right: same bits */
-                     | (b & 0x0010 ? 0x10 : 0)    /* START */
-                     | (b & 0x0020 ? 0x20 : 0)    /* BACK */
-                     | (b & 0x0040 ? 0x40 : 0)    /* LTHUMB */
+    uint16_t buttons = (b & 0x0040 ? 0x40 : 0)    /* LTHUMB */
                      | (b & 0x0080 ? 0x80 : 0);   /* RTHUMB */
-    uint8_t analog[8] = {
-        b & 0x1000 ? 255 : 0, b & 0x2000 ? 255 : 0, b & 0x4000 ? 255 : 0, b & 0x8000 ? 255 : 0,
-        b & 0x0200 ? 255 : 0, b & 0x0100 ? 255 : 0, h.Gamepad.bLeftTrigger, h.Gamepad.bRightTrigger,
-    };
-    /* keyboard: arrows = dpad, Enter = START, Backspace = BACK, Z/X/C/V = A/B/X/Y, Q/E = LT/RT, WASD = left stick */
+    for (int i = 0; i < 6; i++)                   /* dpad up/down/left/right, START, BACK (pad_map) */
+        if (pad_src(&h, pad_map[i]) > 30) buttons |= 1u << i;
+    uint8_t analog[8];                            /* A B X Y BLACK WHITE LT RT */
+    for (int i = 0; i < 8; i++) analog[i] = (uint8_t)pad_src(&h, pad_map[6 + i]);
+    /* keyboard (kb_map; default arrows = dpad, Enter = START, Backspace = BACK, Z/X/C/V = A/B/X/Y, F/G = Black/White,
+     * Q/E = LT/RT, WASD = left stick) */
     if (port == 0 && our_focus()) {
-        if (key(VK_UP)) buttons |= 1;
-        if (key(VK_DOWN)) buttons |= 2;
-        if (key(VK_LEFT)) buttons |= 4;
-        if (key(VK_RIGHT)) buttons |= 8;
-        if (key(VK_RETURN)) buttons |= 0x10;
-        if (key(VK_BACK)) buttons |= 0x20;
-        static const int ak[8] = {'Z', 'X', 'C', 'V', 'F', 'G', 'Q', 'E'};
-        for (int i = 0; i < 8; i++) if (key(ak[i])) analog[i] = 255;
-        if (key('A')) h.Gamepad.sThumbLX = -32767;
-        if (key('D')) h.Gamepad.sThumbLX = 32767;
-        if (key('W')) h.Gamepad.sThumbLY = 32767;
-        if (key('S')) h.Gamepad.sThumbLY = -32767;
+        for (int i = 0; i < 6; i++) if (key(kb_map[i])) buttons |= 1u << i;
+        for (int i = 0; i < 8; i++) if (key(kb_map[6 + i])) analog[i] = 255;
+        if (key(kb_map[14])) h.Gamepad.sThumbLY = 32767;
+        if (key(kb_map[15])) h.Gamepad.sThumbLY = -32767;
+        if (key(kb_map[16])) h.Gamepad.sThumbLX = -32767;
+        if (key(kb_map[17])) h.Gamepad.sThumbLX = 32767;
     }
     if (n_script < 0) script_init();
     if (n_script > 0) {

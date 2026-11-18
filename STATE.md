@@ -362,9 +362,14 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   Verified A1 at 16:9 and 3440x1440: no culling holes seen, menus pillarboxed. GT_SHOTDIR=<dir>. Screen capture from the
   tool session returns black (separate desktop): verify with GT_SHOT and the "[gpu] D3D11 ready ... back buffer" log.
 
+- 2026-11-18: LAUNCHER (docs/installer.md "Launcher"). setup.exe doubles as <install>\launcher.exe --launcher: Play,
+  update check + Update, display settings, HD pack folder, Uninstall; settings.ini [settings] GT_* read by main.c
+  load_settings (env wins). HD pack used in place (GT_HDTEX), not copied. User's install C:\Games\Project Gauntlet
+  updated with it. Not click-tested by hand yet.
+
 ## Next
-0. Launcher + installer rework (Play, Updates, HD textures folder picker -> <install>\textures). HD misses (61/636):
-   check what they are (GT_HDLOG miss lines); consider a VRAM budget for hdtex.
+0. User click-through of the launcher (Play, Browse, Uninstall). Then release 0.2.0 when the user says push (bump
+   VERSION, build, publish on forge + GitLab). HD misses (61/636): check GT_HDLOG miss lines; VRAM budget for hdtex.
 1. Missing text: "Press START" in empty HUD panels and the wizard subtitles in the cutscene bars (above).
    Then test the other characters (routes only use the default hero), GARM movie (level id 0x2B) and the
    legend item movies. Check the white-player frames in A1. Watch for crashes, missed targets and the

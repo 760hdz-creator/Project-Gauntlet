@@ -314,6 +314,13 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   it as overscan. flip_impl now presents that safe area scaled to the 4:3 window (scissored); GT_OVERSCAN=0 shows
   the full 640x480 surface. GT_SHOT still saves the full surface. The cutscene bars are now full-width.
 
+- 2026-11-18: INSTALLER + UPDATER (docs/installer.md). Build-on-the-player's-PC like Project Nexus (no Midway
+  code ships): `installer\build.bat` -> dist\ProjectGauntlet-Setup-<VERSION>.exe (custom Win32 window over the
+  user's art, payload = our kit + embedded Python + capstone), tools/gt_build.py (extract, xbe hash, match_pdb,
+  lift, clang-cl, link), runtime/src/updater.c (forge releases/latest, --update --dir). Installed exe: windows
+  subsystem, log out\gauntlet.log, runs from its folder, relaunches on HalReturnToFirmware(1..3) (first boot).
+  VERSION 0.1.0, not released yet. Test folders G:\gt_test and G:\gt_inst are leftovers (delete by hand).
+
 ## Next
 1. Missing text: "Press START" in empty HUD panels and the wizard subtitles in the cutscene bars (above).
    Then test the other characters (routes only use the default hero), GARM movie (level id 0x2B) and the

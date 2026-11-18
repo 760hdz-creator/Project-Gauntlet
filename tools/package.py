@@ -1,0 +1,68 @@
+"""Stage the installer payload: dist/payload.zip (embedded in ProjectGauntlet-Setup.exe by installer/build.bat).
+
+usage: python -I tools/package.py
+Holds only our build kit (git-tracked files from SHIP) + third party: the embedded CPython (python.org) and the
+capstone Python package (BSD, from this PC's site-packages). No game code or data: the player's PC lifts and builds
+the game from their own disc (tools/gt_build.py). Aborts if anything matching FORBIDDEN is staged.
+"""
+import fnmatch
+import shutil
+import subprocess
+import sys
+import urllib.request
+import zipfile
+from pathlib import Path
+
+import capstone
+
+ROOT = Path(__file__).resolve().parent.parent
+PY_VER = "3.15.0"
+PY_URL = f"https://www.python.org/ftp/python/{PY_VER}/python-{PY_VER}-embed-amd64.zip"
+SHIP = ["VERSION", "README.md", "recomp/lift.py", "recomp/hle.txt", "recomp/hooks.txt", "recomp/seeds_extra.txt",
+        "recomp/include/*", "runtime/src/*", "tools/gt_build.py", "tools/extract_xiso.py", "tools/match_pdb.py",
+        "tools/pdb2.py", "tools/xbedis.py", "installer/install_toolchain.ps1"]
+FORBIDDEN = ["*.xbe", "*.iso", "*.pdb", "*.xbx", "*.wmv", "game/*", "*/lifted/*", "*pdb_match*", "*.ps2", "*.wad"]
+
+
+def main():
+    out = ROOT / "dist" / "payload"
+    if out.exists():
+        shutil.rmtree(out)
+    tracked = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
+    files = [f for f in tracked if any(fnmatch.fnmatch(f, p) for p in SHIP)]
+    for f in files:
+        (out / f).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / f, out / f)
+    cache = ROOT / "dist" / "_cache" / Path(PY_URL).name
+    if not cache.exists():
+        nexus = Path(r"G:\Project M\dist\_cache") / cache.name
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        if nexus.exists():
+            shutil.copy2(nexus, cache)
+        else:
+            print("downloading " + PY_URL)
+            urllib.request.urlretrieve(PY_URL, cache)
+    with zipfile.ZipFile(cache) as z:
+        z.extractall(out / "python")
+    cs = Path(capstone.__file__).parent
+    shutil.copytree(cs, out / "python" / "capstone", ignore=shutil.ignore_patterns("__pycache__", "include", "*.a"))
+    for lic in list(cs.parent.glob("capstone-*.dist-info/LICENSE*")) + list(cs.parent.glob("capstone-*.dist-info/licenses/*")):
+        (out / "licenses").mkdir(exist_ok=True)
+        shutil.copy2(lic, out / "licenses" / ("capstone_" + lic.name))
+    (out / "licenses").mkdir(exist_ok=True)
+    shutil.copy2(out / "python" / "LICENSE.txt", out / "licenses" / "python_LICENSE.txt")
+    bad = [p for p in out.rglob("*") if p.is_file() and
+           any(fnmatch.fnmatch(p.relative_to(out).as_posix().lower(), f.lower()) for f in FORBIDDEN)]
+    if bad:
+        sys.exit("FORBIDDEN files staged: " + ", ".join(map(str, bad[:10])))
+    zpath = ROOT / "dist" / "payload.zip"
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+        for p in sorted(out.rglob("*")):
+            if p.is_file():
+                z.write(p, p.relative_to(out).as_posix())
+    print(f"staged {len(files)} tracked files + python {PY_VER} + capstone {capstone.__version__} -> {zpath} "
+          f"({zpath.stat().st_size / 2**20:.1f} MB)")
+
+
+if __name__ == "__main__":
+    main()

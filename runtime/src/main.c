@@ -121,8 +121,21 @@ static DWORD WINAPI watchdog(void *p) {
     ExitProcess(4);
 }
 
+void updater_start(void);
+
 int main(int argc, char **argv) {
     const char *xbe = argc > 1 ? argv[1] : "game/Default.xbe";
+    if (argc <= 1 && GetFileAttributesA(xbe) == INVALID_FILE_ATTRIBUTES) {   /* installed: run from the exe's folder */
+        char dir[MAX_PATH];
+        DWORD n = GetModuleFileNameA(NULL, dir, MAX_PATH);
+        while (n && dir[n - 1] != '\\') n--;
+        if (n) { dir[n - 1] = 0; SetCurrentDirectoryA(dir); }
+    }
+    CreateDirectoryA("out", NULL);
+    if (!GetConsoleWindow() && (GetStdHandle(STD_ERROR_HANDLE) == NULL ||
+                                GetStdHandle(STD_ERROR_HANDLE) == INVALID_HANDLE_VALUE))
+        freopen("out\\gauntlet.log", "w", stderr);   /* installed build (windows subsystem): log to a file */
+    updater_start();
     ULONG guarantee = 0x10000;
     SetThreadStackGuarantee(&guarantee);
     AddVectoredExceptionHandler(1, crash_handler);

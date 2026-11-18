@@ -419,7 +419,21 @@ K(8, DbgPrint) {
     LOG("[DbgPrint] %s", (char *)g_mem + ARG(0));
     return 0;
 }
-K(49, HalReturnToFirmware) { LOG("[kernel] HalReturnToFirmware(%u)\n", ARG(0)); ExitProcess(0); }
+/* HalReturnToFirmware(routine): 0 halt, 1 reboot, 2 quick reboot, 3 hard reboot. XAPI quick-reboots on the first
+ * boot after it prepares the hard disk partitions (a fresh out\hdd): relaunch this exe the way the console relaunches
+ * the title. GT_INPUT runs just exit (a relaunch would replay the script). */
+K(49, HalReturnToFirmware) {
+    LOG("[kernel] HalReturnToFirmware(%u)\n", ARG(0));
+    if (ARG(0) >= 1 && ARG(0) <= 3 && !getenv("GT_INPUT")) {
+        STARTUPINFOA si = {sizeof si};
+        PROCESS_INFORMATION pi;
+        if (CreateProcessA(NULL, GetCommandLineA(), NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+        }
+    }
+    ExitProcess(0);
+}
 K(360, HalInitiateShutdown) { LOG("[kernel] HalInitiateShutdown\n"); ExitProcess(0); }
 K(95, KeBugCheck) { rt_fatal("KeBugCheck(%08X)", ARG(0)); }
 

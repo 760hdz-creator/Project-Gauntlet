@@ -1,0 +1,157 @@
+/* Update check (forge releases), like Project Nexus' launcher updater.
+ * At start a background thread GETs https://git.8gramlabs.com/api/v1/repos/8gramlabs/Project-Gauntlet/releases/latest.
+ * When its tag_name ("v0.1.2") is newer than GT_VERSION (the build stamp gt_build.py passes), the player is asked;
+ * yes downloads the release asset ProjectGauntlet-Setup-*.exe to %TEMP% and runs it with
+ * "--update --dir <install dir>" (it rebuilds the game from the installed data and starts it again), then exits.
+ * Off for dev builds (no GT_VERSION), scripted test runs (GT_INPUT) and GT_NOUPDATE=1.
+ * Testing: GT_UPDATE_REPO=<owner/repo> and GT_UPDATE_ASSET=<asset name prefix> check another forge repo. */
+#include <windows.h>
+#include <winhttp.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "rt.h"
+
+#ifndef GT_VERSION
+#define GT_VERSION ""
+#endif
+#define GT_WIDEN2(x) L##x
+#define GT_WIDEN(x) GT_WIDEN2(x)
+#define GT_VERSION_W GT_WIDEN(GT_VERSION)
+
+#define UPD_HOST L"git.8gramlabs.com"
+#define UPD_PATH L"/api/v1/repos/8gramlabs/Project-Gauntlet/releases/latest"
+#define UPD_ASSET "ProjectGauntlet-Setup"
+
+/* GET https://host/path (host NULL: url is a full https URL). Body to *out (malloc'd) or to file `to`. */
+static int http_get(const wchar_t *url, char **out, size_t *len, const wchar_t *to) {
+    URL_COMPONENTS uc = {sizeof uc};
+    wchar_t host[256], path[2048];
+    uc.lpszHostName = host; uc.dwHostNameLength = 256;
+    uc.lpszUrlPath = path; uc.dwUrlPathLength = 2048;
+    if (!WinHttpCrackUrl(url, 0, 0, &uc)) return 0;
+    HINTERNET s = WinHttpOpen(L"ProjectGauntlet/" GT_VERSION_W, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, NULL, NULL, 0);
+    if (!s) return 0;
+    WinHttpSetTimeouts(s, 10000, 10000, 15000, 60000);
+    HINTERNET c = WinHttpConnect(s, host, uc.nPort, 0);
+    HINTERNET r = c ? WinHttpOpenRequest(c, L"GET", path, NULL, NULL, NULL, WINHTTP_FLAG_SECURE) : NULL;
+    int ok = r && WinHttpSendRequest(r, L"Accept: application/json\r\n", (DWORD)-1, NULL, 0, 0, 0) &&
+             WinHttpReceiveResponse(r, NULL);
+    DWORD code = 0, cl = sizeof code;
+    if (ok) WinHttpQueryHeaders(r, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, NULL, &code, &cl, NULL);
+    ok = ok && code == 200;
+    FILE *f = NULL;
+    if (ok && to) ok = (f = _wfopen(to, L"wb")) != NULL;
+    size_t n = 0, cap = 0;
+    char *buf = NULL, chunk[65536];
+    DWORD got;
+    while (ok && WinHttpReadData(r, chunk, sizeof chunk, &got) && got) {
+        if (f) { if (fwrite(chunk, 1, got, f) != got) ok = 0; continue; }
+        if (n + got + 1 > cap) { cap = (n + got + 1) * 2; buf = realloc(buf, cap); }
+        memcpy(buf + n, chunk, got);
+        n += got;
+    }
+    if (f) fclose(f);
+    if (buf) buf[n] = 0;
+    if (r) WinHttpCloseHandle(r);
+    if (c) WinHttpCloseHandle(c);
+    WinHttpCloseHandle(s);
+    if (out) *out = buf; else free(buf);
+    if (len) *len = n;
+    return ok;
+}
+
+/* The JSON string value after "key": starting at *pos (advanced past it); unescapes \" \\ \/ \n. */
+static int json_str(const char *j, const char *key, size_t *pos, char *dst, size_t cap) {
+    char pat[64];
+    snprintf(pat, sizeof pat, "\"%s\"", key);
+    const char *p = strstr(j + *pos, pat);
+    if (!p) return 0;
+    p = strchr(p + strlen(pat), '"');
+    if (!p) return 0;
+    size_t k = 0;
+    for (p++; *p && *p != '"'; p++) {
+        char ch = *p;
+        if (ch == '\\' && p[1]) { p++; ch = *p == 'n' ? '\n' : *p; }
+        if (k + 1 < cap) dst[k++] = ch;
+    }
+    dst[k] = 0;
+    *pos = (size_t)(p - j);
+    return 1;
+}
+
+/* "v1.2.3" / "1.2.3" -> comparable number */
+static unsigned long long ver_num(const char *v) {
+    unsigned a = 0, b = 0, c = 0;
+    if (*v == 'v' || *v == 'V') v++;
+    sscanf(v, "%u.%u.%u", &a, &b, &c);
+    return ((unsigned long long)a << 40) | ((unsigned long long)b << 20) | c;
+}
+
+static DWORD WINAPI update_thread(void *arg) {
+    (void)arg;
+    char *body = NULL;
+    const char *repo = getenv("GT_UPDATE_REPO"), *asset = getenv("GT_UPDATE_ASSET");
+    if (!asset) asset = UPD_ASSET;
+    wchar_t api[512];
+    if (repo) swprintf(api, 512, L"https://" UPD_HOST L"/api/v1/repos/%hs/releases/latest", repo);
+    else wcscpy(api, L"https://" UPD_HOST UPD_PATH);
+    if (!http_get(api, &body, NULL, NULL) || !body) {
+        LOG("[update] no release found\n");
+        free(body);
+        return 0;
+    }
+    char tag[64] = "", notes[1024] = "", url[1024] = "", name[256];
+    size_t pos = 0;
+    json_str(body, "tag_name", &pos, tag, sizeof tag);
+    pos = 0;
+    json_str(body, "body", &pos, notes, sizeof notes);
+    pos = 0;
+    while (json_str(body, "name", &pos, name, sizeof name)) {   /* assets: "name" ... "browser_download_url" */
+        if (!strncmp(name, asset, strlen(asset)) && strstr(name, ".exe")) {
+            json_str(body, "browser_download_url", &pos, url, sizeof url);
+            break;
+        }
+    }
+    free(body);
+    if (!tag[0] || !url[0] || ver_num(tag) <= ver_num(GT_VERSION)) {
+        LOG("[update] up to date (installed %s, latest %s)\n", GT_VERSION, tag[0] ? tag : "none");
+        return 0;
+    }
+    LOG("[update] %s available (installed %s): %s\n", tag, GT_VERSION, url);
+    char msg[1600];
+    snprintf(msg, sizeof msg, "Project Gauntlet %s is available (you have %s).\n\n%.900s\n\n"
+             "Update now? The game closes, the update rebuilds it (a few minutes) and starts it again.",
+             tag, GT_VERSION, notes);
+    if (MessageBoxA(NULL, msg, "Project Gauntlet update", MB_YESNO | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND)
+        != IDYES)
+        return 0;
+    wchar_t wurl[1024], tmp[MAX_PATH], setup[MAX_PATH], dir[MAX_PATH], cmd[2 * MAX_PATH + 64];
+    MultiByteToWideChar(CP_UTF8, 0, url, -1, wurl, 1024);
+    GetTempPathW(MAX_PATH, tmp);
+    swprintf(setup, MAX_PATH, L"%sProjectGauntlet-Setup-%hs.exe", tmp, tag);
+    if (!http_get(wurl, NULL, NULL, setup)) {
+        MessageBoxA(NULL, "The update could not be downloaded. Try again later, or download it from\n"
+                    "https://git.8gramlabs.com/8gramlabs/Project-Gauntlet/releases", "Project Gauntlet update",
+                    MB_OK | MB_ICONWARNING | MB_TOPMOST);
+        return 0;
+    }
+    GetModuleFileNameW(NULL, dir, MAX_PATH);
+    wchar_t *slash = wcsrchr(dir, L'\\');
+    if (slash) *slash = 0;
+    swprintf(cmd, sizeof cmd / sizeof cmd[0], L"\"%s\" --update --dir \"%s\"", setup, dir);
+    STARTUPINFOW si = {sizeof si};
+    PROCESS_INFORMATION pi;
+    if (CreateProcessW(setup, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+        CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+        ExitProcess(0);
+    }
+    return 0;
+}
+
+void updater_start(void) {
+    const char *no = getenv("GT_NOUPDATE");
+    if (!GT_VERSION[0] || getenv("GT_INPUT") || (no && *no == '1')) return;
+    HANDLE t = CreateThread(NULL, 0, update_thread, NULL, 0, NULL);
+    if (t) CloseHandle(t);
+}

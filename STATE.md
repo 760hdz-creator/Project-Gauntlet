@@ -352,6 +352,16 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   A1 run (input_char-1.txt): 513 exact + 62 tex0 of 636 lookups, 61 miss, no failures, index scan 16 ms,
   shots out/shots_hd_on vs out/shots_hd_off: visibly sharper, colours match. No VRAM budget/eviction yet.
 
+- 2026-11-18: VISUALS (gpu_d3d11.c). Defaults now: render scale = ceil(monitor height / 448) clamped 2..6 (GT_SCALE),
+  4x MSAA (GT_MSAA=1/2/4/8; surfaces keep a multisampled ms texture, resolved into tex when sampled, flipped or
+  shot), 16x anisotropic on linear+mip samplers (GT_ANISO), borderless fullscreen F11 / Alt+Enter (GT_FULLSCREEN=1;
+  DXGI Alt+Enter disabled), window = 2/3 monitor height at monitor aspect. WIDESCREEN hor+ (default, GT_WIDESCREEN=0
+  off, GT_ASPECT=w:h): 640x480 targets are k = 448*aspect/640 wider (16:9 1.244, 3440x1440 1.672); VS multiplies clip x
+  by 1/k (zs.y) so the 4:3 picture and the HUD stay centered and 3D past the old frustum fills the sides; rect clears
+  covering x 32..607 extend to the full width; present_wide fills the window height with the 448-line safe area.
+  Verified A1 at 16:9 and 3440x1440: no culling holes seen, menus pillarboxed. GT_SHOTDIR=<dir>. Screen capture from the
+  tool session returns black (separate desktop): verify with GT_SHOT and the "[gpu] D3D11 ready ... back buffer" log.
+
 ## Next
 0. Launcher + installer rework (Play, Updates, HD textures folder picker -> <install>\textures). HD misses (61/636):
    check what they are (GT_HDLOG miss lines); consider a VRAM budget for hdtex.

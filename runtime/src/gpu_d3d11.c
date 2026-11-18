@@ -23,6 +23,7 @@
 static int g_scale = 0;   /* GT_SCALE=1..8: host render-target scale over the guest resolution; 0 = from the monitor */
 static int g_msaa = 4;    /* GT_MSAA=1/2/4/8: samples per pixel on host render targets */
 #define GPU_SCALE g_scale
+static float g_wide = 1;  /* widescreen: main 640x480 targets are this much wider (GT_WIDESCREEN=0 off, GT_ASPECT=w:h) */
 static int g_aniso = 16;  /* GT_ANISO=0/1..16: anisotropic filtering on minifying linear samplers */
 
 static HWND g_hwnd;
@@ -93,11 +94,23 @@ static DWORD WINAPI window_thread(LPVOID ev) {
     wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     wc.lpszClassName = L"GauntletRecomp";
     RegisterClassW(&wc);
-    RECT r = {0, 0, 1280, 960};
-    AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
     const char *me = getenv("GT_MONITOR");
     MonPick mp = {me ? atoi(me) : -1, 0, {0}, 0};
     EnumDisplayMonitors(NULL, NULL, mon_enum, (LPARAM)&mp);
+    /* window: 2/3 of the monitor height, monitor aspect (4:3 with GT_WIDESCREEN=0) */
+    int wh = 960, ww = 1280;
+    {
+        POINT origin = {0, 0};
+        HMONITOR hm = mp.found ? MonitorFromRect(&mp.pick, MONITOR_DEFAULTTONEAREST) : MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY);
+        MONITORINFO mi = {sizeof mi};
+        GetMonitorInfoW(hm, &mi);
+        int mw = mi.rcMonitor.right - mi.rcMonitor.left, mh = mi.rcMonitor.bottom - mi.rcMonitor.top;
+        const char *ws = getenv("GT_WIDESCREEN");
+        wh = mh * 2 / 3;
+        ww = ws && *ws == '0' ? wh * 4 / 3 : (int)((double)wh * mw / mh);
+    }
+    RECT r = {0, 0, ww, wh};
+    AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
     int x = CW_USEDEFAULT, y = CW_USEDEFAULT;
     if (mp.found) { x = mp.pick.left + 32; y = mp.pick.top + 32; }
     g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Gauntlet Dark Legacy (recomp)", WS_OVERLAPPEDWINDOW,
@@ -135,7 +148,7 @@ static const char *vs_src =
     "  float4 c = float4(dot(M[0], p), dot(M[1], p), dot(M[2], p), dot(M[3], p));\n"
     "  VO o;\n"
     "  float sx = c.x + vp.x * c.w, sy = c.y + vp.y * c.w;\n"
-    "  o.pos = float4(sx * vp.z - c.w, c.w - sy * vp.w, c.z * zs.x, c.w);\n"
+    "  o.pos = float4((sx * vp.z - c.w) * zs.y, c.w - sy * vp.w, c.z * zs.x, c.w);\n"
     "  o.d = i.a3; o.s = i.a4;\n"
     "  o.t0 = tm(0, i.a9); o.t1 = tm(1, i.a10); o.t2 = tm(2, i.a11); o.t3 = tm(3, i.a12);\n"
     "  o.fog = 1;\n"
@@ -169,6 +182,8 @@ typedef struct {
     ID3D11Texture2D *tex; ID3D11RenderTargetView *rtv; ID3D11ShaderResourceView *srv;
     ID3D11Texture2D *ms;   /* multisampled color (rtv points here when g_msaa > 1); resolved into tex on read */
     int dirty;
+    float k;               /* horizontal widening (g_wide for the main 640x480 targets, else 1) */
+    int hw, hh;            /* host size */
     uint32_t last_frame;
 } Surface;
 typedef struct { uint32_t addr; int w, h; ID3D11Texture2D *tex; ID3D11DepthStencilView *dsv; } ZSurface;
@@ -188,6 +203,9 @@ static Surface *find_rt(uint32_t addr) {
     return NULL;
 }
 
+static float wide_k(int w, int h) { return w == 640 && h == 480 ? g_wide : 1.0f; }
+static int host_w(int w, int h) { return (int)(w * GPU_SCALE * wide_k(w, h) + 0.5f) & ~1; }
+
 static Surface *get_rt(uint32_t addr, int w, int h) {
     Surface *s = find_rt(addr);
     if (s && s->w == w && s->h == h) return s;
@@ -201,7 +219,7 @@ static Surface *get_rt(uint32_t addr, int w, int h) {
     if (s->tex) { ID3D11Texture2D_Release(s->tex); ID3D11RenderTargetView_Release(s->rtv); ID3D11ShaderResourceView_Release(s->srv); }
     if (s->ms) { ID3D11Texture2D_Release(s->ms); s->ms = NULL; }
     D3D11_TEXTURE2D_DESC d = {0};
-    d.Width = w * GPU_SCALE; d.Height = h * GPU_SCALE; d.MipLevels = 1; d.ArraySize = 1;
+    d.Width = host_w(w, h); d.Height = h * GPU_SCALE; d.MipLevels = 1; d.ArraySize = 1;
     d.Format = DXGI_FORMAT_B8G8R8A8_UNORM; d.SampleDesc.Count = 1; d.Usage = D3D11_USAGE_DEFAULT;
     d.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
     ID3D11Device_CreateTexture2D(dev, &d, NULL, &s->tex);
@@ -214,6 +232,7 @@ static Surface *get_rt(uint32_t addr, int w, int h) {
     float black[4] = {0, 0, 0, 1};
     ID3D11DeviceContext_ClearRenderTargetView(ctx, s->rtv, black);
     s->addr = addr; s->w = w; s->h = h; s->dirty = 1;
+    s->k = wide_k(w, h); s->hw = host_w(w, h); s->hh = h * GPU_SCALE;
     LOG("[gpu] render target %08X %dx%d\n", addr, w, h);
     return s;
 }
@@ -225,7 +244,7 @@ static ZSurface *get_zs(uint32_t addr, int w, int h) {
     if (!z) z = n_zss < 8 ? &zss[n_zss++] : &zss[0];
     if (z->tex) { ID3D11Texture2D_Release(z->tex); ID3D11DepthStencilView_Release(z->dsv); }
     D3D11_TEXTURE2D_DESC d = {0};
-    d.Width = w * GPU_SCALE; d.Height = h * GPU_SCALE; d.MipLevels = 1; d.ArraySize = 1;
+    d.Width = host_w(w, h); d.Height = h * GPU_SCALE; d.MipLevels = 1; d.ArraySize = 1;
     d.Format = DXGI_FORMAT_D24_UNORM_S8_UINT; d.SampleDesc.Count = g_msaa; d.Usage = D3D11_USAGE_DEFAULT;
     d.BindFlags = D3D11_BIND_DEPTH_STENCIL;
     ID3D11Device_CreateTexture2D(dev, &d, NULL, &z->tex);
@@ -261,7 +280,7 @@ static void bind_targets(void) {
         cur_zs = get_zs(zaddr, w, h);
     }
     ID3D11DeviceContext_OMSetRenderTargets(ctx, 1, &cur_rt->rtv, cur_zs ? cur_zs->dsv : NULL);
-    D3D11_VIEWPORT vp = {0, 0, (float)(w * GPU_SCALE), (float)(h * GPU_SCALE), 0, 1};
+    D3D11_VIEWPORT vp = {0, 0, (float)cur_rt->hw, (float)cur_rt->hh, 0, 1};
     ID3D11DeviceContext_RSSetViewports(ctx, 1, &vp);
 }
 
@@ -318,6 +337,20 @@ void gpu_init(void) {
         if (g_scale < 2) g_scale = 2;
         if (g_scale > 6) g_scale = 6;
     }
+    {   /* widescreen (default; GT_WIDESCREEN=0 = original 4:3): hor+ to the monitor aspect (GT_ASPECT=w:h overrides). The visible area is the
+         * 448-line title-safe height, so the target covers 448 * aspect guest columns. */
+        const char *ws = getenv("GT_WIDESCREEN"), *as = getenv("GT_ASPECT");
+        if (!(ws && *ws == '0')) {
+            MONITORINFO mi = {sizeof mi};
+            GetMonitorInfoW(MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST), &mi);
+            float aspect = (float)(mi.rcMonitor.right - mi.rcMonitor.left) / (float)(mi.rcMonitor.bottom - mi.rcMonitor.top);
+            float aw, ah;
+            if (as && sscanf(as, "%f:%f", &aw, &ah) == 2 && aw > 0 && ah > 0) aspect = aw / ah;
+            g_wide = 448.0f * aspect / 640.0f;
+            if (g_wide < 1) g_wide = 1;
+            if (g_wide > 3) g_wide = 3;
+        }
+    }
     if (g_msaa > 1) {
         UINT q1 = 0, q2 = 0;
         ID3D11Device_CheckMultisampleQualityLevels(dev, DXGI_FORMAT_B8G8R8A8_UNORM, g_msaa, &q1);
@@ -367,7 +400,7 @@ void gpu_init(void) {
     smp.MaxLOD = D3D11_FLOAT32_MAX;
     ID3D11Device_CreateSamplerState(dev, &smp, &blit_sampler);
     gpu_ok = 1;
-    LOG("[gpu] D3D11 ready, scale %d, msaa %d, aniso %d, back buffer %ux%u\n", GPU_SCALE, g_msaa, g_aniso, bb_w, bb_h);
+    LOG("[gpu] D3D11 ready, scale %d, msaa %d, aniso %d, widescreen %.3f, back buffer %ux%u\n", GPU_SCALE, g_msaa, g_aniso, g_wide, bb_w, bb_h);
 }
 
 static int ready(void) {
@@ -1109,7 +1142,7 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
     vc.vp[0] = kf(K_VIEWPORT_OFFSET); vc.vp[1] = kf(K_VIEWPORT_OFFSET + 4);
     vc.vp[2] = 2.0f / cur_rt->w; vc.vp[3] = 2.0f / cur_rt->h;
     uint32_t zfmt = (KREG(K_SURF_FORMAT) >> 4) & 0xF;
-    vc.zs[0] = 1.0f / (zfmt == 1 ? 65535.0f : 16777215.0f); vc.zs[1] = vc.zs[2] = vc.zs[3] = 0;
+    vc.zs[0] = 1.0f / (zfmt == 1 ? 65535.0f : 16777215.0f); vc.zs[1] = 1.0f / cur_rt->k; vc.zs[2] = vc.zs[3] = 0;
     for (int s = 0; s < 4; s++) {
         vc.ten[s] = (KREG(K_TEXMAT_EN + s * 4) & 1) ? 1.f : 0.f;
         for (int j = 0; j < 16; j++) vc.T[s * 16 + j] = kf(K_TEXTURE_MATRIX + s * 64 + j * 4);
@@ -1213,7 +1246,9 @@ static void clear_impl(uint32_t flags) {
         } else {
             ID3D11DeviceContext1 *c1 = NULL;
             if (SUCCEEDED(ID3D11DeviceContext_QueryInterface(ctx, &IID_ID3D11DeviceContext1, (void **)&c1))) {
-                D3D11_RECT r = {x0 * GPU_SCALE, y0 * GPU_SCALE, (x1 + 1) * GPU_SCALE, (y1 + 1) * GPU_SCALE};
+                int off = (cur_rt->hw - cur_rt->w * GPU_SCALE) / 2;   /* widescreen: the 4:3 area is centered */
+                D3D11_RECT r = {off + x0 * GPU_SCALE, y0 * GPU_SCALE, off + (x1 + 1) * GPU_SCALE, (y1 + 1) * GPU_SCALE};
+                if (cur_rt->k > 1 && x0 <= 32 && x1 >= cur_rt->w - 33) { r.left = 0; r.right = cur_rt->hw; }
                 ID3D11DeviceContext1_ClearView(c1, (ID3D11View *)cur_rt->rtv, c, &r, 1);
                 ID3D11DeviceContext1_Release(c1);
             } else ID3D11DeviceContext_ClearRenderTargetView(ctx, cur_rt->rtv, c);
@@ -1268,8 +1303,25 @@ static void present_srv(ID3D11ShaderResourceView *srv, float x, float y, float d
     ID3D11DeviceContext_IASetInputLayout(ctx, NULL);
     ID3D11DeviceContext_VSSetShader(ctx, blit_vs, NULL, 0);
     ID3D11DeviceContext_PSSetShader(ctx, blit_ps, NULL, 0);
-    ID3D11DeviceContext_PSSetShaderResources(ctx, 0, 1, &srv);
     ID3D11DeviceContext_PSSetSamplers(ctx, 0, 1, &blit_sampler);
+    if (!srv) return;
+    ID3D11DeviceContext_PSSetShaderResources(ctx, 0, 1, &srv);
+    ID3D11DeviceContext_Draw(ctx, 3, 0);
+    ID3D11ShaderResourceView *null_srv = NULL;
+    ID3D11DeviceContext_PSSetShaderResources(ctx, 0, 1, &null_srv);
+}
+
+/* Widescreen present: the target's 480 lines (or the 448-line safe area with overscan) fill the window height,
+ * square pixels, centered horizontally. */
+static void present_wide(ID3D11ShaderResourceView *srv, float k, int overscan) {
+    present_srv(NULL, 0, 0, 0, 0);   /* resize + clear + bind the back buffer */
+    float w = (float)bb_w, h = (float)bb_h;
+    float dh = overscan ? h * 480.f / 448.f : h, dy = overscan ? -h * 16.f / 448.f : 0, dw = dh * 640.f * k / 480.f;
+    D3D11_VIEWPORT vp = {(w - dw) / 2, dy, dw, dh, 0, 1};
+    D3D11_RECT sr = {0, 0, (LONG)bb_w, (LONG)bb_h};
+    ID3D11DeviceContext_RSSetViewports(ctx, 1, &vp);
+    ID3D11DeviceContext_RSSetScissorRects(ctx, 1, &sr);
+    ID3D11DeviceContext_PSSetShaderResources(ctx, 0, 1, &srv);
     ID3D11DeviceContext_Draw(ctx, 3, 0);
     ID3D11ShaderResourceView *null_srv = NULL;
     ID3D11DeviceContext_PSSetShaderResources(ctx, 0, 1, &null_srv);
@@ -1324,7 +1376,9 @@ static void flip_impl(uint32_t addr) {
          * Show the safe area scaled to the window; GT_OVERSCAN=0 shows the whole 640x480 surface. */
         static int overscan = -1;
         if (overscan < 0) { const char *e = getenv("GT_OVERSCAN"); overscan = !(e && *e == '0'); }
-        if (overscan && s->w == 640 && s->h == 480)
+        if (s->k > 1)
+            present_wide(s->srv, s->k, overscan);
+        else if (overscan && s->w == 640 && s->h == 480)
             present_srv(s->srv, -32.f * 640 / 580, -16.f * 480 / 448, 640.f * 640 / 580, 480.f * 480 / 448);
         else
             present_srv(s->srv, 0, 0, 640, 480);

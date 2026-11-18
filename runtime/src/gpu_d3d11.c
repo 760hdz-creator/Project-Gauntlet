@@ -159,9 +159,48 @@ static const char *blit_vs_src =
     "struct VO { float4 pos:SV_Position; float2 uv:TEXCOORD0; };\n"
     "VO main(uint id : SV_VertexID) { VO o; float2 t = float2((id << 1) & 2, id & 2);\n"
     "  o.uv = t; o.pos = float4(t * float2(2, -2) + float2(-1, 1), 0, 1); return o; }\n";
+/* Present pass with optional post-processing (pp: x sharpen 0..1, y FXAA on, z CRT on, w source lines).
+ * FXAA: a small FXAA 3.11-style edge blend. Sharpen: contrast-adaptive (CAS-like), strength x. CRT: scanlines on the
+ * game's 480 lines, a faint RGB mask and a soft vignette. */
 static const char *blit_ps_src =
     "Texture2D tx : register(t0); SamplerState sm : register(s0);\n"
-    "float4 main(float4 pos:SV_Position, float2 uv:TEXCOORD0) : SV_Target { return float4(tx.Sample(sm, uv).rgb, 1); }\n";
+    "cbuffer P : register(b0) { float4 pp; };\n"
+    "float L(float3 c) { return dot(c, float3(0.299, 0.587, 0.114)); }\n"
+    "float3 S(float2 uv) { return tx.SampleLevel(sm, uv, 0).rgb; }\n"
+    "float4 main(float4 pos:SV_Position, float2 uv:TEXCOORD0) : SV_Target {\n"
+    "  uint W, H; tx.GetDimensions(W, H); float2 t = 1.0 / float2(W, H);\n"
+    "  float3 c = S(uv);\n"
+    "  if (pp.y > 0 || pp.x > 0) {\n"
+    "    float3 n = S(uv + float2(0, -t.y)), s = S(uv + float2(0, t.y)), e = S(uv + float2(t.x, 0)), w = S(uv - float2(t.x, 0));\n"
+    "    if (pp.y > 0) {\n"
+    "      float lc = L(c), ln = L(n), ls = L(s), le = L(e), lw = L(w);\n"
+    "      float mn = min(lc, min(min(ln, ls), min(le, lw))), mx = max(lc, max(max(ln, ls), max(le, lw)));\n"
+    "      if (mx - mn > max(0.0312, mx * 0.125)) {\n"
+    "        float a = L(S(uv - t)), b = L(S(uv + float2(t.x, -t.y))), d = L(S(uv + float2(-t.x, t.y))), f = L(S(uv + t));\n"
+    "        float2 dir = float2(-((a + b) - (d + f)), (a + d) - (b + f));\n"
+    "        float red = max((a + b + d + f) * 0.03125, 1.0 / 128);\n"
+    "        dir = clamp(dir / (min(abs(dir.x), abs(dir.y)) + red), -8, 8) * t;\n"
+    "        float3 r1 = 0.5 * (S(uv - dir / 6) + S(uv + dir / 6));\n"
+    "        float3 r2 = r1 * 0.5 + 0.25 * (S(uv - dir * 0.5) + S(uv + dir * 0.5));\n"
+    "        float l2 = L(r2); c = (l2 < mn || l2 > mx) ? r1 : r2;\n"
+    "      }\n"
+    "    }\n"
+    "    if (pp.x > 0) {\n"
+    "      float3 mn3 = min(c, min(min(n, s), min(e, w))), mx3 = max(c, max(max(n, s), max(e, w)));\n"
+    "      float3 amp = sqrt(saturate(min(mn3, 1 - mx3) / max(mx3, 1e-4)));\n"
+    "      float3 wt = -amp * lerp(0.125, 0.2, pp.x);\n"
+    "      c = saturate((c + (n + s + e + w) * wt) / (1 + 4 * wt));\n"
+    "    }\n"
+    "  }\n"
+    "  if (pp.z > 0) {\n"
+    "    float sl = sin(uv.y * pp.w * 3.14159265); sl = 0.62 + 0.38 * sl * sl;\n"
+    "    uint m = (uint)pos.x % 3; float3 mask = float3(m == 0 ? 1.0 : 0.9, m == 1 ? 1.0 : 0.9, m == 2 ? 1.0 : 0.9);\n"
+    "    float2 v = uv * (1 - uv); float vig = saturate(pow(v.x * v.y * 16, 0.15));\n"
+    "    c = saturate(c * sl * mask * vig * 1.22);\n"
+    "  }\n"
+    "  return float4(c, 1); }\n";
+static ID3D11Buffer *post_cb;
+static float post_pp[4];   /* GT_SHARPEN=0..100, GT_FXAA=1, GT_CRT=1 */
 
 static ID3D11VertexShader *vs, *blit_vs;
 static ID3D11PixelShader *blit_ps;
@@ -399,6 +438,19 @@ void gpu_init(void) {
     smp.AddressU = smp.AddressV = smp.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
     smp.MaxLOD = D3D11_FLOAT32_MAX;
     ID3D11Device_CreateSamplerState(dev, &smp, &blit_sampler);
+    {
+        const char *e;
+        post_pp[0] = (e = getenv("GT_SHARPEN")) ? (float)atoi(e) / 100.f : 0.f;
+        if (post_pp[0] > 1) post_pp[0] = 1;
+        post_pp[1] = (e = getenv("GT_FXAA")) && *e == '1';
+        post_pp[2] = (e = getenv("GT_CRT")) && *e == '1';
+        post_pp[3] = 480;
+        D3D11_BUFFER_DESC bd = {16, D3D11_USAGE_DEFAULT, D3D11_BIND_CONSTANT_BUFFER, 0, 0, 0};
+        D3D11_SUBRESOURCE_DATA sd = {post_pp, 0, 0};
+        ID3D11Device_CreateBuffer(dev, &bd, &sd, &post_cb);
+        if (post_pp[0] > 0 || post_pp[1] > 0 || post_pp[2] > 0)
+            LOG("[gpu] post: sharpen %.2f fxaa %d crt %d\n", post_pp[0], (int)post_pp[1], (int)post_pp[2]);
+    }
     gpu_ok = 1;
     LOG("[gpu] D3D11 ready, scale %d, msaa %d, aniso %d, widescreen %.3f, back buffer %ux%u\n", GPU_SCALE, g_msaa, g_aniso, g_wide, bb_w, bb_h);
 }
@@ -1304,6 +1356,7 @@ static void present_srv(ID3D11ShaderResourceView *srv, float x, float y, float d
     ID3D11DeviceContext_VSSetShader(ctx, blit_vs, NULL, 0);
     ID3D11DeviceContext_PSSetShader(ctx, blit_ps, NULL, 0);
     ID3D11DeviceContext_PSSetSamplers(ctx, 0, 1, &blit_sampler);
+    ID3D11DeviceContext_PSSetConstantBuffers(ctx, 0, 1, &post_cb);
     if (!srv) return;
     ID3D11DeviceContext_PSSetShaderResources(ctx, 0, 1, &srv);
     ID3D11DeviceContext_Draw(ctx, 3, 0);
@@ -1328,13 +1381,16 @@ static void present_wide(ID3D11ShaderResourceView *srv, float k, int overscan) {
 }
 
 /* GT_SHOT=N: write out/shots/fNNNNN.bmp every N frames (the flipped surface, guest resolution x GPU_SCALE). */
-static void screenshot(Surface *s) {
+static void screenshot_tex(ID3D11Texture2D *src);
+static void screenshot(Surface *s) { screenshot_tex(s->tex); }
+/* GT_SHOTBB=1: GT_SHOT saves the presented back buffer (window size, after post-processing) instead. */
+static void screenshot_tex(ID3D11Texture2D *src) {
     D3D11_TEXTURE2D_DESC d;
-    ID3D11Texture2D_GetDesc(s->tex, &d);
+    ID3D11Texture2D_GetDesc(src, &d);
     d.Usage = D3D11_USAGE_STAGING; d.BindFlags = 0; d.CPUAccessFlags = D3D11_CPU_ACCESS_READ; d.MiscFlags = 0;
     ID3D11Texture2D *st = NULL;
     if (FAILED(ID3D11Device_CreateTexture2D(dev, &d, NULL, &st))) return;
-    ID3D11DeviceContext_CopyResource(ctx, (ID3D11Resource *)st, (ID3D11Resource *)s->tex);
+    ID3D11DeviceContext_CopyResource(ctx, (ID3D11Resource *)st, (ID3D11Resource *)src);
     D3D11_MAPPED_SUBRESOURCE m;
     if (SUCCEEDED(ID3D11DeviceContext_Map(ctx, (ID3D11Resource *)st, 0, D3D11_MAP_READ, 0, &m))) {
         char path[MAX_PATH];
@@ -1380,7 +1436,9 @@ static void flip_impl(uint32_t addr) {
     if (s) surface_resolve(s);
     static int shot_every = -1;
     if (shot_every < 0) { const char *e = getenv("GT_SHOT"); shot_every = e ? atoi(e) : 0; }
-    if (s && shot_every > 0 && frame_no % shot_every == 0) screenshot(s);
+    static int shot_bb = -1;
+    if (shot_bb < 0) { const char *e = getenv("GT_SHOTBB"); shot_bb = e && *e == '1'; }
+    if (s && shot_every > 0 && frame_no % shot_every == 0 && !shot_bb) screenshot(s);
     if (s) {
         /* TV overscan: the game draws 2D (HUD, loading screens, cutscene bars) inside the title-safe viewport
          * x 32..611, y 16..463 and its clears cover only that rect, so the border keeps stale frames that a TV hides.
@@ -1396,6 +1454,13 @@ static void flip_impl(uint32_t addr) {
     } else {
         static int warned;
         if (warned++ < 4) LOG("[gpu] flip: no surface at %08X\n", addr);
+    }
+    if (s && shot_bb && shot_every > 0 && frame_no % shot_every == 0) {
+        ID3D11Texture2D *bb = NULL;
+        if (SUCCEEDED(IDXGISwapChain_GetBuffer(swap, 0, &IID_ID3D11Texture2D, (void **)&bb))) {
+            screenshot_tex(bb);
+            ID3D11Texture2D_Release(bb);
+        }
     }
     IDXGISwapChain_Present(swap, 0, 0);
     last_flip_tick = GetTickCount();

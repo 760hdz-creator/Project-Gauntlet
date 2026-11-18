@@ -17,6 +17,10 @@
  * CPU box-filtered mip chain; until a file is ready the original texture is drawn.
  * GT_HDTEX=<dir> picks the pack folder (default "textures" next to the exe), GT_HDTEX=0 turns it off,
  * GT_HDLOG=1 logs every lookup, GT_HDDEBUG=1 tints replaced textures magenta.
+ * Several files for one TEX0 (palette variants) and no CLUT match: the loader decodes each, box-filters it to the
+ * original size and takes the closest one (mean channel difference <= 40), once per TEX0+CLUT.
+ * VRAM budget: GT_HDVRAM=<MB> (default half the adapter VRAM, 512..4096). Past it, textures no cache entry holds are
+ * freed oldest first; gpu_d3d11.c drops cache entries idle for 3 s so their views can go.
  */
 #define COBJMACROS
 #define WIN32_LEAN_AND_MEAN
@@ -25,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #define XXH_INLINE_ALL
 #include "xxhash.h"
 #include "hdtex.h"
@@ -36,9 +41,15 @@ typedef struct {
     uint32_t path;           /* offset into the string pool */
     volatile LONG state;     /* 0 idle, 1 queued, 2 ready, 3 failed */
     ID3D11ShaderResourceView *srv;
+    uint32_t bytes;          /* VRAM of the loaded texture with its mips */
+    uint32_t used;           /* counted in g_vram */
+    uint32_t *ref; int rw, rh;   /* pick entry: the original RGBA, to choose among CLUT variants of one TEX0 */
 } Entry;
+#define SPARE_ENTS 8192      /* room for pick entries added at run time; ents is not reallocated after the scan */
+static uint64_t g_vram, g_budget;   /* bytes of loaded HD textures, cap (GT_HDVRAM=<MB>) */
+static int *loaded; static int n_loaded;   /* ids in state 2, oldest first */
 
-static Entry *ents; static int n_ents, cap_ents;
+static Entry *ents; static int n_ents, cap_ents, n_pack;   /* n_pack = entries from the scan (pack files) */
 static char *pool; static size_t n_pool, cap_pool;
 static int *htab; static uint32_t hmask;      /* (tex0, clut, bits) -> entry, open addressing */
 static int *t0tab;                             /* (tex0, bits) -> entry or -2 when several files share it */
@@ -107,15 +118,15 @@ static int q_buf[4096]; static unsigned q_head, q_tail;
 static ID3D11Device *q_dev;
 static IWICImagingFactory *wic;
 
-static ID3D11ShaderResourceView *load_png(const char *path) {
+/* PNG -> RGBA8 (R in the low byte) with GS alpha (0x80 = 1.0) scaled to 8 bits. NULL on failure. */
+static uint32_t *decode_png(const char *path, UINT *pw, UINT *ph) {
     IWICBitmapDecoder *dec = NULL;
     IWICBitmapFrameDecode *frame = NULL;
     IWICFormatConverter *conv = NULL;
-    ID3D11ShaderResourceView *srv = NULL;
     WCHAR wpath[MAX_PATH * 2];
     MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, MAX_PATH * 2);
     UINT w = 0, h = 0;
-    uint32_t *lv[16] = {0};
+    uint32_t *px = NULL;
     if (FAILED(IWICImagingFactory_CreateDecoderFromFilename(wic, wpath, NULL, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec)))
         goto out;
     if (FAILED(IWICBitmapDecoder_GetFrame(dec, 0, &frame))) goto out;
@@ -125,19 +136,54 @@ static ID3D11ShaderResourceView *load_png(const char *path) {
         goto out;
     IWICFormatConverter_GetSize(conv, &w, &h);
     if (!w || !h || w > 8192 || h > 8192) goto out;
-    lv[0] = malloc((size_t)w * h * 4);
-    if (FAILED(IWICFormatConverter_CopyPixels(conv, NULL, w * 4, w * h * 4, (BYTE *)lv[0]))) goto out;
-    for (size_t i = 0, n = (size_t)w * h; i < n; i++) {   /* GS alpha (0x80 = 1.0) -> 8-bit */
-        uint32_t c = lv[0][i], a = c >> 24;
-        a = a >= 0x80 ? 255 : a * 2;
-        if (g_debug) c = (c & 0xFF00FF) | ((c >> 10) & 0x3F00);   /* GT_HDDEBUG=1: replaced textures turn magenta */
-        lv[0][i] = (c & 0xFFFFFF) | a << 24;
+    px = malloc((size_t)w * h * 4);
+    if (FAILED(IWICFormatConverter_CopyPixels(conv, NULL, w * 4, w * h * 4, (BYTE *)px))) { free(px); px = NULL; goto out; }
+    for (size_t i = 0, n = (size_t)w * h; i < n; i++) {
+        uint32_t c = px[i], a = c >> 24;
+        px[i] = (c & 0xFFFFFF) | (a >= 0x80 ? 255 : a * 2) << 24;
     }
+    *pw = w; *ph = h;
+out:
+    if (conv) IWICFormatConverter_Release(conv);
+    if (frame) IWICBitmapFrameDecode_Release(frame);
+    if (dec) IWICBitmapDecoder_Release(dec);
+    return px;
+}
+
+/* Mean per-channel difference (0..255) between an HD image box-filtered down to rw x rh and the original.
+ * Colour counts only where the original is visible. */
+static double pick_score(const uint32_t *hd, UINT w, UINT h, const uint32_t *ref, int rw, int rh) {
+    double sum = 0, wsum = 0;
+    for (int y = 0; y < rh; y++)
+        for (int x = 0; x < rw; x++) {
+            UINT x0 = (UINT)x * w / rw, x1 = (UINT)(x + 1) * w / rw, y0 = (UINT)y * h / rh, y1 = (UINT)(y + 1) * h / rh;
+            if (x1 <= x0) x1 = x0 + 1;
+            if (y1 <= y0) y1 = y0 + 1;
+            double c[4] = {0};
+            for (UINT yy = y0; yy < y1; yy++)
+                for (UINT xx = x0; xx < x1; xx++)
+                    for (int k = 0; k < 4; k++) c[k] += hd[yy * w + xx] >> (k * 8) & 255;
+            double n = (double)(x1 - x0) * (y1 - y0), wa = (ref[y * rw + x] >> 24) / 255.0;
+            uint32_t r = ref[y * rw + x];
+            for (int k = 0; k < 3; k++) sum += fabs(c[k] / n - (r >> (k * 8) & 255)) * wa;
+            sum += fabs(c[3] / n - (r >> 24)) ;
+            wsum += 3 * wa + 1;
+        }
+    return wsum > 0 ? sum / wsum : 255;
+}
+
+static ID3D11ShaderResourceView *upload(uint32_t *px, UINT w, UINT h, uint32_t *bytes) {
+    ID3D11ShaderResourceView *srv = NULL;
+    uint32_t *lv[16] = {px};
+    if (g_debug)   /* GT_HDDEBUG=1: replaced textures turn magenta */
+        for (size_t i = 0, n = (size_t)w * h; i < n; i++) px[i] = (px[i] & 0xFF00FFFF) | ((px[i] >> 10) & 0x3F00);
+    *bytes = 0;
     D3D11_SUBRESOURCE_DATA init[16];
     int nl = 0;
     UINT lw = w, lh = h;
     for (;;) {
         init[nl].pSysMem = lv[nl]; init[nl].SysMemPitch = lw * 4; init[nl].SysMemSlicePitch = 0;
+        *bytes += lw * lh * 4;
         nl++;
         if ((lw == 1 && lh == 1) || nl == 16) break;
         UINT nw = lw > 1 ? lw / 2 : 1, nh = lh > 1 ? lh / 2 : 1;
@@ -160,12 +206,27 @@ static ID3D11ShaderResourceView *load_png(const char *path) {
         ID3D11Device_CreateShaderResourceView(q_dev, (ID3D11Resource *)tex, NULL, &srv);
         ID3D11Texture2D_Release(tex);   /* the view keeps it alive */
     }
-out:
-    for (int i = 0; i < 16; i++) free(lv[i]);
-    if (conv) IWICFormatConverter_Release(conv);
-    if (frame) IWICBitmapFrameDecode_Release(frame);
-    if (dec) IWICBitmapDecoder_Release(dec);
+    for (int i = 0; i < 16; i++) free(lv[i]);   /* frees px too */
     return srv;
+}
+
+/* Several pack files share this TEX0 (palette variants): take the one closest to the original, if close enough. */
+static int pick(Entry *e) {
+    static const double kMax = 40;   /* mean channel difference above which no variant is used */
+    int best = -1; double bs = 1e9, second = 1e9;
+    for (int i = 0; i < n_pack; i++) {
+        Entry *c = &ents[i];
+        if (c->tex0 != e->tex0 || c->bits != e->bits) continue;
+        UINT w, h;
+        uint32_t *px = decode_png(pool + c->path, &w, &h);
+        if (!px) continue;
+        double s = pick_score(px, w, h, e->ref, e->rw, e->rh);
+        free(px);
+        if (g_log) LOG("[hdtex] pick %016llx candidate %s: %.1f\n", (unsigned long long)e->tex0, pool + c->path, s);
+        if (s < bs) { second = bs; bs = s; best = i; } else if (s < second) second = s;
+    }
+    if (best >= 0 && bs <= kMax) { e->path = ents[best].path; return 1; }
+    return 0;
 }
 
 static DWORD WINAPI loader_thread(LPVOID unused) {
@@ -186,7 +247,15 @@ static DWORD WINAPI loader_thread(LPVOID unused) {
             if (id < 0) break;
             Entry *e = &ents[id];
             DWORD t0 = GetTickCount();
-            e->srv = load_png(pool + e->path);
+            if (e->ref) {   /* decided once; the entry then loads like any other */
+                int ok = pick(e);
+                free(e->ref); e->ref = NULL;
+                if (!ok) { if (g_log) LOG("[hdtex] pick %016llx: no close variant\n", (unsigned long long)e->tex0);
+                           InterlockedExchange(&e->state, 3); continue; }
+            }
+            UINT w, h;
+            uint32_t *px = decode_png(pool + e->path, &w, &h);
+            e->srv = px ? upload(px, w, h, &e->bytes) : NULL;
             if (g_log) LOG("[hdtex] load %s: %s (%lu ms)\n", pool + e->path, e->srv ? "ok" : "FAILED", GetTickCount() - t0);
             InterlockedExchange(&e->state, e->srv ? 2 : 3);
         }
@@ -204,8 +273,12 @@ int hdtex_enabled(void) {
     DWORD t0 = GetTickCount();
     scan(g_dir);
     if (!n_ents) { if (env) LOG("[hdtex] no PNG files in %s\n", g_dir); return 0; }
+    n_pack = n_ents;
+    cap_ents = n_ents + SPARE_ENTS;
+    ents = realloc(ents, sizeof *ents * cap_ents);
+    loaded = malloc(sizeof *loaded * cap_ents);
     uint32_t sz = 1;
-    while (sz < (uint32_t)n_ents * 2) sz <<= 1;
+    while (sz < (uint32_t)cap_ents * 2) sz <<= 1;
     hmask = sz - 1;
     htab = malloc(sizeof *htab * sz); t0tab = malloc(sizeof *t0tab * sz);
     memset(htab, 0xFF, sizeof *htab * sz); memset(t0tab, 0xFF, sizeof *t0tab * sz);
@@ -220,6 +293,8 @@ int hdtex_enabled(void) {
     }
     InitializeCriticalSection(&q_lock);
     q_event = CreateEventA(NULL, FALSE, FALSE, NULL);
+    const char *vb = getenv("GT_HDVRAM");
+    if (vb && atoi(vb) > 0) g_budget = (uint64_t)atoi(vb) << 20;
     g_enabled = 1;
     LOG("[hdtex] %d replacement textures in %s (%d duplicates, %lu ms)\n", n_ents, g_dir, dup, GetTickCount() - t0);
     return 1;
@@ -291,22 +366,91 @@ int hdtex_find(const uint8_t *idx, int w, int h, const uint32_t *pal, uint32_t p
         int s = *probe(htab, tries[k].t, tries[k].c, tries[k].psm | size_bits, 0);
         if (s >= 0) { id = s; how = "exact"; }
     }
+    int several = -1;
     for (int k = 0; k < 2 && id < 0; k++) {   /* one file for this TEX0 hash: use it whatever the CLUT */
         if (k == 1 && mx >= 16) break;
         int s = *probe(t0tab, k ? t4 : t8, 0, (k ? 0x14 : 0x13) | size_bits, 1);
         if (s >= 0) { id = s; how = "tex0"; }
+        else if (s <= -3 && several < 0) several = k;
+    }
+    if (id < 0 && several >= 0 && n_ents < cap_ents) {
+        /* several palette variants: a pick entry keyed by this exact CLUT, decided by the loader (pick) */
+        uint64_t t = several ? t4 : t8, c = several ? c4 : c8;
+        uint32_t bits = (several ? 0x14 : 0x13) | size_bits;
+        Entry *e = &ents[n_ents];
+        memset(e, 0, sizeof *e);
+        e->tex0 = t; e->clut = c; e->bits = bits;
+        e->ref = malloc((size_t)w * h * 4); e->rw = w; e->rh = h;
+        for (int i = 0, n = w * h; i < n; i++) {
+            uint32_t q = pal[idx[i] < pal_len ? idx[i] : 0];
+            e->ref[i] = (q >> 16 & 255) | (q & 0xFF00) | (q & 255) << 16 | (q & 0xFF000000u);
+        }
+        *probe(htab, t, c, bits, 0) = n_ents;
+        id = n_ents++;
+        how = "pick";
     }
     if (g_log) LOG("[hdtex] %dx%d pal %u: t8 %llx t4 %llx clut %llx/%llx -> %s %s\n", w, h, pal_len,
                    (unsigned long long)t8, (unsigned long long)t4, (unsigned long long)c8, (unsigned long long)c4, how,
-                   id >= 0 ? pool + ents[id].path : "");
+                   id >= 0 && !ents[id].ref ? pool + ents[id].path : "");
     return id;
 }
+
+/* Default budget: half the adapter's dedicated VRAM, 512 MB .. 4 GB (GT_HDVRAM=<MB> overrides). */
+static void budget_init(ID3D11Device *dev) {
+    IDXGIDevice *xd = NULL; IDXGIAdapter *ad = NULL;
+    DXGI_ADAPTER_DESC d = {0};
+    if (SUCCEEDED(ID3D11Device_QueryInterface(dev, &IID_IDXGIDevice, (void **)&xd))) {
+        if (SUCCEEDED(IDXGIDevice_GetAdapter(xd, &ad))) { IDXGIAdapter_GetDesc(ad, &d); IDXGIAdapter_Release(ad); }
+        IDXGIDevice_Release(xd);
+    }
+    uint64_t b = (uint64_t)d.DedicatedVideoMemory / 2;
+    if (b < (512ull << 20)) b = 512ull << 20;
+    if (b > (4096ull << 20)) b = 4096ull << 20;
+    g_budget = b;
+    LOG("[hdtex] VRAM budget %llu MB (adapter %llu MB)\n", (unsigned long long)(b >> 20),
+        (unsigned long long)(d.DedicatedVideoMemory >> 20));
+}
+
+/* Over budget: release the oldest loaded textures no cached texture still holds (view refcount 1 = only ours).
+ * An evicted entry goes back to idle and reloads the next time a texture needs it. */
+static void budget_trim(ID3D11Device *dev, int keep) {
+    if (!g_budget) budget_init(dev);
+    if (g_vram <= g_budget) return;
+    int k = 0, freed = 0;
+    for (int i = 0; i < n_loaded; i++) {
+        Entry *e = &ents[loaded[i]];
+        if (g_vram > g_budget && loaded[i] != keep) {
+            ID3D11ShaderResourceView_AddRef(e->srv);
+            if (ID3D11ShaderResourceView_Release(e->srv) == 1) {
+                ID3D11ShaderResourceView_Release(e->srv);
+                e->srv = NULL; e->used = 0; g_vram -= e->bytes; freed++;
+                InterlockedExchange(&e->state, 0);
+                continue;
+            }
+        }
+        loaded[k++] = loaded[i];
+    }
+    n_loaded = k;
+    if (g_log) LOG("[hdtex] evicted %d textures, %llu MB in use\n", freed, (unsigned long long)(g_vram >> 20));
+}
+
+int hdtex_over_budget(void) { return g_enabled == 1 && g_budget && g_vram > g_budget; }
+void hdtex_trim(ID3D11Device *dev) { if (g_enabled == 1) budget_trim(dev, -1); }
 
 ID3D11ShaderResourceView *hdtex_get(ID3D11Device *dev, int id) {
     if (id < 0 || id >= n_ents || g_enabled != 1) return NULL;
     Entry *e = &ents[id];
     LONG st = e->state;
-    if (st == 2) { ID3D11ShaderResourceView_AddRef(e->srv); return e->srv; }
+    if (st == 2) {
+        if (!e->used) {   /* newly loaded: account for it and evict unused ones past the budget */
+            e->used = 1;
+            g_vram += e->bytes;
+            loaded[n_loaded++] = id;
+            budget_trim(dev, id);
+        }
+        ID3D11ShaderResourceView_AddRef(e->srv);
+        return e->srv;
+    }
     if (st != 0) return NULL;
     static HANDLE thr;
     if (!thr) { q_dev = dev; thr = CreateThread(NULL, 0, loader_thread, NULL, 0, NULL); }

@@ -1365,6 +1365,17 @@ static void screenshot(Surface *s) {
 static void flip_impl(uint32_t addr) {
     if (!ready()) return;
     frame_no++;
+    if (frame_no % 30 == 0 && hdtex_over_budget()) {
+        /* HD textures past the VRAM budget: drop cache entries idle for 3 s so their HD views can be freed */
+        for (int i = 0; i < TEX_CACHE; i++) {
+            TexEntry *e = &tcache[i];
+            if (!e->srv || frame_no - e->last_frame < 90) continue;
+            ID3D11ShaderResourceView_Release(e->srv); e->srv = NULL;
+            if (e->tex) { ID3D11Texture2D_Release(e->tex); e->tex = NULL; }
+            e->hd = -1;
+        }
+        hdtex_trim(dev);
+    }
     Surface *s = find_rt(addr);
     if (s) surface_resolve(s);
     static int shot_every = -1;

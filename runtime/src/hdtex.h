@@ -10,3 +10,7 @@ int hdtex_find(const uint8_t *idx, int w, int h, const uint32_t *pal, uint32_t p
 /* The entry's texture with a new reference once it is loaded; NULL while it is loading (the first call queues it)
  * or when it failed. */
 ID3D11ShaderResourceView *hdtex_get(ID3D11Device *dev, int id);
+/* Loaded HD textures use more VRAM than the budget (GT_HDVRAM=<MB>, default half the adapter's). */
+int hdtex_over_budget(void);
+/* Free loaded HD textures that no texture cache entry holds, oldest first, until under the budget. */
+void hdtex_trim(ID3D11Device *dev);

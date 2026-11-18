@@ -602,6 +602,27 @@ static ID3D11ShaderResourceView *get_texture(int i, int *rect, int *tw, int *th)
     }
     v->addr = addr; v->fmt = fmtw; v->pitch = pitch; v->w = w; v->h = h; v->pal_addr = pal_addr; v->pal_len = pal_len;
     v->hash = hsh; v->last_frame = frame_no;
+    if (f.kind == TF_I8 && f.swizzled) {   /* GT_TEXRAW=1: dump palettized textures (texture-pack research) */
+        static int raw = -1, nraw;
+        if (raw < 0) { const char *e = getenv("GT_TEXRAW"); raw = e && *e == '1'; }
+        if (raw && nraw < 600) {
+            char path[64];
+            CreateDirectoryA("out\\texraw", NULL);
+            snprintf(path, sizeof path, "out\\texraw\\%03d_%08X.bin", nraw++, addr);
+            FILE *fp = fopen(path, "wb");
+            if (fp) {   /* w, h, pal_len, then linear (unswizzled) indices, then the raw A8R8G8B8 palette */
+                uint32_t hdr[3] = {(uint32_t)w, (uint32_t)h, pal_len};
+                fwrite(hdr, 4, 3, fp);
+                uint32_t *xs = malloc(w * 4), *ys = malloc(h * 4);
+                swizzle_tables(w, h, xs, ys);
+                for (int y = 0; y < h; y++)
+                    for (int x = 0; x < w; x++) fputc(g_mem[(addr & 0x03FFFFFF) + (xs[x] | ys[y])], fp);
+                free(xs); free(ys);
+                fwrite(g_mem + pal_addr, 4, pal_len, fp);
+                fclose(fp);
+            }
+        }
+    }
     v->srv = create_texture(v, f, levels, palette);
     mm->frame = frame_no; mm->addr = addr; mm->fmt = fmtw; mm->pal_addr = pal_addr; mm->pitch = pitch; mm->e = v;
     return v->srv;

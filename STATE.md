@@ -321,7 +321,28 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   subsystem, log out\gauntlet.log, runs from its folder, relaunches on HalReturnToFirmware(1..3) (first boot).
   VERSION 0.1.0, not released yet. Test folders G:\gt_test and G:\gt_inst are leftovers (delete by hand).
 
+- 2026-11-18 (late): HD TEXTURE PACK research. User pack: %USERPROFILE%\Downloads\(PS2) Gauntlet Dark Legacy HD
+  2.0\...\SLUS-20047\replacements = PCSX2 replacement pack, 19634 PNG (2.1 GB), names
+  `<TEX0Hash>-<CLUTHash>-<bits %08x>.png` (31 without CLUT). bits = PSM:6 TW:4 TH:4 unused:1 TA0:8 AEM:1 TA1:8
+  (00005553 = PSMT8 0x13, 32x32). The Xbox build keeps the PS2 8-bit indexed textures (D3D P8, kind TF_I8).
+  GT_TEXRAW=1 dumps palettized textures (linear indices + raw A8R8G8B8 palette) to out/texraw/ (597 in a hub+A1 run).
+  out/hdtex/hashdump.c (xxhash.h from G:\Project Zero\external\XenonRecomp\thirdparty\xxHash) computes candidates.
+  RESULTS: CLUT hash MATCHES for 386/597: XXH3_64 over the 256 (or 16) palette entries as PS2 u32 R|G<<8|B<<16|A<<24
+  with alpha halved (0xFF -> 0x80, else (a+1)/2), Xbox palette order as-is. TEX0 hash matches only tiny textures
+  (8x8, 16x8...; XXH3 of linear indices). PCSX2 (GSTextureCache.cpp HashTextureLevel, GPL): if tw < block width or
+  th < block height (PSMT8 block 16x16; PSMT4 32x16) or psm.fmsk != ~0 -> XXH3 of the linear expanded texture
+  (what we match); ELSE XXH3 over the raw 256-byte GS memory BLOCKS of the texture in block order (blocks row by
+  row, x then y, via off.bnMulti), i.e. PS2 PSMT8 swizzled block bytes. NEXT: re-swizzle our linear indices into
+  PS2 GS block layout (PSMT8 block = 16x16, 4 columns of 16x4 with the column byte interleave from GSLocalMemory
+  tables; check whether some textures were PSMT4 on PS2 = 16-colour palettes: pal_len 16) and hash per block in
+  order; verify against the pack; then a runtime loader: hash at texture creation (cache by Xbox hash), load the
+  PNG (WIC), upload at HD size (sampler uses normalized coords except rect textures). Pack ships separately (user's
+  own file): installer gets an "HD textures" folder picker that copies/links the pack into <install>\textures.
+  User also asked: redo the installer to create a LAUNCHER for the game (Nexus-style launcher window: Play,
+  Updates, HD textures section/settings) instead of only a shortcut.
+
 ## Next
+0. HD textures (above), then the launcher + installer rework.
 1. Missing text: "Press START" in empty HUD panels and the wizard subtitles in the cutscene bars (above).
    Then test the other characters (routes only use the default hero), GARM movie (level id 0x2B) and the
    legend item movies. Check the white-player frames in A1. Watch for crashes, missed targets and the

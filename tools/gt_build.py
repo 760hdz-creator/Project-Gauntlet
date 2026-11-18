@@ -23,7 +23,8 @@ XBE_SHA256 = "0982be1a51a045af36032dc98e3a3af37fcadae9f103d1443bd480700a4c6e76"
 LIFT_FLAGS = ["/nologo", "/c", "/O2", "-Wno-unused-label", "-Wno-unused-variable", "-Wno-unused-but-set-variable",
               "-Wno-parentheses-equality", "-Wno-everything"]
 LIBS = ["libcmt.lib", "kernel32.lib", "winmm.lib", "user32.lib", "gdi32.lib", "d3d11.lib", "dxgi.lib", "dxguid.lib",
-        "d3dcompiler.lib", "shlwapi.lib", "winhttp.lib", "shell32.lib", "advapi32.lib"]
+        "d3dcompiler.lib", "shlwapi.lib", "winhttp.lib", "shell32.lib", "advapi32.lib", "ole32.lib",
+        "windowscodecs.lib"]
 
 
 def step(msg):

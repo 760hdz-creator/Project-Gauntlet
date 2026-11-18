@@ -341,8 +341,20 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   User also asked: redo the installer to create a LAUNCHER for the game (Nexus-style launcher window: Play,
   Updates, HD textures section/settings) instead of only a shortcut.
 
+- 2026-11-18: HD TEXTURES WORK (runtime/src/hdtex.c, hooked into gpu_d3d11.c get_texture). PCSX2 pack hashes rebuilt
+  from the Xbox P8 data: TEX0 = XXH3 over 256-byte GS blocks in raster block order (PSMT8 16x16, PSMT4 32x16 nibbles,
+  in-block offsets from a formula verified equal to GSLocalMemory columnTable8/4; textures smaller than a block hash
+  linear indices); CLUT = XXH3 of PS2 RGBA words, alpha 0xFF->0x80 else (a+1)/2, 256 entries (PSMT8) / 16 (PSMT4).
+  Pack names are hex WITHOUT zero padding. Offline (out/hdtex/blockhash.c over 597 texraw dumps): 544 TEX0 hits,
+  475 full TEX0+CLUT. Runtime key includes PSM|TW|TH bits; fallback = the only file for that TEX0 (fixes 62 more).
+  Loader thread (WIC, PNG alpha x2 since 0x80 = opaque, CPU box mips), original texture drawn until ready.
+  Env: GT_HDTEX=<dir> (default "textures" in the exe folder), GT_HDTEX=0 off, GT_HDLOG=1. Links ole32 + windowscodecs.
+  A1 run (input_char-1.txt): 513 exact + 62 tex0 of 636 lookups, 61 miss, no failures, index scan 16 ms,
+  shots out/shots_hd_on vs out/shots_hd_off: visibly sharper, colours match. No VRAM budget/eviction yet.
+
 ## Next
-0. HD textures (above), then the launcher + installer rework.
+0. Launcher + installer rework (Play, Updates, HD textures folder picker -> <install>\textures). HD misses (61/636):
+   check what they are (GT_HDLOG miss lines); consider a VRAM budget for hdtex.
 1. Missing text: "Press START" in empty HUD panels and the wizard subtitles in the cutscene bars (above).
    Then test the other characters (routes only use the default hero), GARM movie (level id 0x2B) and the
    legend item movies. Check the white-player frames in A1. Watch for crashes, missed targets and the

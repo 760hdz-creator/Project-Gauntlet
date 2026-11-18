@@ -18,6 +18,7 @@
 #include <string.h>
 #include "rt.h"
 #include "kelvin.h"
+#include "hdtex.h"
 
 #define GPU_SCALE 2
 
@@ -329,8 +330,22 @@ typedef struct {
     uint64_t hash;
     uint32_t last_frame;
     int w, h;
+    int hd;   /* HD replacement entry still loading (hdtex.c), or -1 */
     ID3D11Texture2D *tex; ID3D11ShaderResourceView *srv;
 } TexEntry;
+
+/* Swap in the HD replacement once its loader is done. */
+static ID3D11ShaderResourceView *tex_srv(TexEntry *e) {
+    if (e->hd >= 0) {
+        ID3D11ShaderResourceView *s = hdtex_get(dev, e->hd);
+        if (s) {
+            if (e->srv) ID3D11ShaderResourceView_Release(e->srv);
+            if (e->tex) { ID3D11Texture2D_Release(e->tex); e->tex = NULL; }
+            e->srv = s; e->hd = -1;
+        }
+    }
+    return e->srv;
+}
 #define TEX_CACHE 4096
 static TexEntry tcache[TEX_CACHE];
 #define TEX_MEMO 1024
@@ -571,7 +586,7 @@ static ID3D11ShaderResourceView *get_texture(int i, int *rect, int *tw, int *th)
     TexMemo *mm = &tmemo[mslot];
     if (mm->frame == frame_no && mm->addr == addr && mm->fmt == fmtw && mm->pal_addr == pal_addr && mm->pitch == pitch &&
         mm->e && mm->e->srv && mm->e->addr == addr && mm->e->fmt == fmtw)
-        return mm->e->srv;
+        return tex_srv(mm->e);
     uint32_t nbytes = tex_bytes(f, w, h, levels, pitch);
     uint64_t hsh = hash_mem(addr, nbytes, 0xCBF29CE484222325ull);
     if (pal_len) hsh = hash_mem(pal_addr, pal_len * 4, hsh);
@@ -582,7 +597,7 @@ static ID3D11ShaderResourceView *get_texture(int i, int *rect, int *tw, int *th)
             e->pal_addr == pal_addr && e->pal_len == pal_len) {
             e->last_frame = frame_no;
             mm->frame = frame_no; mm->addr = addr; mm->fmt = fmtw; mm->pal_addr = pal_addr; mm->pitch = pitch; mm->e = e;
-            return e->srv;
+            return tex_srv(e);
         }
     }
     /* miss: take an empty slot or the least recently used one in the probe window */
@@ -601,7 +616,17 @@ static ID3D11ShaderResourceView *get_texture(int i, int *rect, int *tw, int *th)
         }
     }
     v->addr = addr; v->fmt = fmtw; v->pitch = pitch; v->w = w; v->h = h; v->pal_addr = pal_addr; v->pal_len = pal_len;
-    v->hash = hsh; v->last_frame = frame_no;
+    v->hash = hsh; v->last_frame = frame_no; v->hd = -1;
+    if (f.kind == TF_I8 && f.swizzled && pal_len && hdtex_enabled() && (addr & 0x03FFFFFF) + (uint32_t)w * h <= RAM_SIZE &&
+        pal_addr + pal_len * 4 <= RAM_SIZE) {
+        uint8_t *lin = malloc((size_t)w * h);
+        uint32_t *xs = malloc(w * 4), *ys = malloc(h * 4);
+        swizzle_tables(w, h, xs, ys);
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++) lin[y * w + x] = g_mem[addr + (xs[x] | ys[y])];
+        v->hd = hdtex_find(lin, w, h, (const uint32_t *)(g_mem + pal_addr), pal_len);
+        free(lin); free(xs); free(ys);
+    }
     if (f.kind == TF_I8 && f.swizzled) {   /* GT_TEXRAW=1: dump palettized textures (texture-pack research) */
         static int raw = -1, nraw;
         if (raw < 0) { const char *e = getenv("GT_TEXRAW"); raw = e && *e == '1'; }
@@ -625,7 +650,7 @@ static ID3D11ShaderResourceView *get_texture(int i, int *rect, int *tw, int *th)
     }
     v->srv = create_texture(v, f, levels, palette);
     mm->frame = frame_no; mm->addr = addr; mm->fmt = fmtw; mm->pal_addr = pal_addr; mm->pitch = pitch; mm->e = v;
-    return v->srv;
+    return tex_srv(v);
 }
 
 static D3D11_TEXTURE_ADDRESS_MODE addr_mode(uint32_t m) {

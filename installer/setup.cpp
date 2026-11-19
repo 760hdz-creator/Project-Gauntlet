@@ -44,7 +44,7 @@ static const wchar_t kShortcut[] = L"Project Gauntlet.lnk";
 enum { ID_ISO_EDIT = 200, ID_ISO_BROWSE, ID_DIR_EDIT, ID_DIR_BROWSE, ID_DESKTOP, ID_STARTMENU, ID_INSTALL, ID_PROGRESS,
        ID_STATUS, ID_HD_EDIT, ID_HD_BROWSE, ID_HD_USE, ID_HD_STATUS, ID_PLAY, ID_UPDATE, ID_UNINSTALL, ID_FULLSCREEN,
        ID_WIDESCREEN, ID_SCALE, ID_MSAA, ID_ANISO, ID_PADS, ID_SHARPEN, ID_FXAA, ID_CRT, ID_CONTROLS, ID_CTL_BACK,
-       ID_CTL_DEFAULTS, ID_FPS60, ID_HITFLASH, ID_LOGS, ID_CHEATS, ID_CH_BACK, ID_MONITOR, ID_CH0 = 1900, ID_KEY0 = 2000, ID_PADM0 = 2100 };
+       ID_CTL_DEFAULTS, ID_FPS60, ID_HITFLASH, ID_LOGS, ID_CHEATS, ID_CH_BACK, ID_MONITOR, ID_DRAWDIST, ID_CH0 = 1900, ID_KEY0 = 2000, ID_PADM0 = 2100 };
 #define WM_APP_STATUS (WM_APP + 1)
 #define WM_APP_PROGRESS (WM_APP + 2)
 #define WM_APP_DONE (WM_APP + 3)
@@ -489,6 +489,8 @@ static const Choice kAniso[] = {{L"Trilinear", L"1"}, {L"2x anisotropic", L"2"},
                                 {L"8x anisotropic", L"8"}, {L"16x anisotropic (default)", nullptr}};
 static const Choice kPads[] = {{L"1 (default)", nullptr}, {L"2", L"2"}, {L"3", L"3"}, {L"4", L"4"}};
 static const Choice kHitFlash[] = {{L"Soft (default)", nullptr}, {L"Full (original)", L"100"}, {L"Off", L"0"}};
+static const Choice kDrawDist[] = {{L"Normal (default)", nullptr}, {L"Far (1.5x)", L"150"}, {L"Very far (2x)", L"200"},
+                                   {L"Max (3x)", L"300"}};
 static const Choice kSharpen[] = {{L"Off (default)", nullptr}, {L"Low", L"30"}, {L"Medium", L"60"}, {L"High", L"100"}};
 // Monitors in EnumDisplayMonitors order (the game's GT_MONITOR uses the same order); filled by InitMonitors.
 static Choice kMonitor[10] = {{L"Main monitor (default)", nullptr}};
@@ -512,7 +514,8 @@ static ComboSetting kCombos[] = {{ID_SCALE, L"GT_SCALE", kScale, 6}, {ID_MSAA, L
                                        {ID_ANISO, L"GT_ANISO", kAniso, 5}, {ID_PADS, L"GT_PADS", kPads, 4},
                                        {ID_SHARPEN, L"GT_SHARPEN", kSharpen, 4},
                                        {ID_HITFLASH, L"GT_HITFLASH", kHitFlash, 3},
-                                       {ID_MONITOR, L"GT_MONITOR", kMonitor, 1}};
+                                       {ID_MONITOR, L"GT_MONITOR", kMonitor, 1},
+                                       {ID_DRAWDIST, L"GT_DRAWDIST", kDrawDist, 4}};
 static void InitMonitors() {
     EnumDisplayMonitors(nullptr, nullptr, MonEnum, 0);
     for (auto& cs : kCombos) if (cs.id == ID_MONITOR) cs.n = g_nMonitors;
@@ -533,12 +536,12 @@ static void UpdateHdStatus() {
     if (!g_hdStatus) return;
     std::wstring d = GetText(g_hd);
     if (d.empty()) {
-        SetWindowTextW(g_hdStatus, L"Pick the pack's folder, for example ...\\SLUS-20047\\replacements.");
+        SetWindowTextW(g_hdStatus, L"Pick the pack's replacements folder.");
         return;
     }
     int n = CountPngs(d);
     SetWindowTextW(g_hdStatus, n ? (std::to_wstring(n) + L" HD textures found.").c_str()
-                                 : L"No PNG files in this folder. Pick the PCSX2 pack's folder.");
+                                 : L"No PNG files in this folder.");
 }
 static void LoadSettings() {
     for (auto& cs : kCombos) {
@@ -788,14 +791,15 @@ static void BuildArt(int w, int h) {
             DrawTextW(g_artDC, v.data(), (int)v.size(), &r, DT_SINGLELINE | DT_PATH_ELLIPSIS | DT_NOPREFIX);
         }
         text(x, t + 262, g_font, kAccent, L"Display");
-        text(x, t + 374, g_font, kText, L"Monitor");
-        text(x, t + 412, g_font, kText, L"Resolution");
-        text(x, t + 450, g_font, kText, L"Anti-aliasing");
-        text(x, t + 488, g_font, kText, L"Texture filtering");
-        text(x, t + 526, g_font, kText, L"Sharpening");
-        text(x, t + 564, g_font, kText, L"Hit flash");
-        text(x, t + 602, g_font, kText, L"Players (gamepads)");
-        text(x, t + 642, g_font, kAccent, L"HD textures");
+        text(x, t + 371, g_font, kText, L"Monitor");
+        text(x, t + 407, g_font, kText, L"Resolution");
+        text(x, t + 443, g_font, kText, L"Draw distance");
+        text(x, t + 479, g_font, kText, L"Anti-aliasing");
+        text(x, t + 515, g_font, kText, L"Texture filtering");
+        text(x, t + 551, g_font, kText, L"Sharpening");
+        text(x, t + 587, g_font, kText, L"Hit flash");
+        text(x, t + 623, g_font, kText, L"Players (gamepads)");
+        text(x, t + 662, g_font, kAccent, L"HD textures");
         return;
     }
     text(x, t + 24, g_titleFont, kAccent, g_updating ? L"Update Project Gauntlet" : L"Install Project Gauntlet");
@@ -982,7 +986,7 @@ static bool LauncherCommand(HWND h, int id, int code) {
     case ID_CH0: case ID_CH0 + 1: case ID_CH0 + 2: case ID_CH0 + 3: case ID_CH0 + 4:
         if (code == BN_CLICKED) SaveSettings();
         return true;
-    case ID_SCALE: case ID_MSAA: case ID_ANISO: case ID_PADS: case ID_SHARPEN: case ID_HITFLASH: case ID_MONITOR:
+    case ID_SCALE: case ID_MSAA: case ID_ANISO: case ID_PADS: case ID_SHARPEN: case ID_HITFLASH: case ID_MONITOR: case ID_DRAWDIST:
         if (code == CBN_SELCHANGE) SaveSettings();
         return true;
     }
@@ -1112,19 +1116,20 @@ static void CreateLauncherControls() {
     MakeCheck(L"FXAA (smooths edges)", ID_FXAA, x, t + 334, 300);
     MakeCheck(L"CRT scanlines", ID_CRT, x + 320, t + 334, 300);
     MakeCheck(L"60 fps (beta)", ID_FPS60, x + 490, t + 296, 190);
-    MakeCombo(ID_MONITOR, kMonitor, g_nMonitors, cx, t + 368, cw);
-    MakeCombo(ID_SCALE, kScale, 6, cx, t + 406, cw);
-    MakeCombo(ID_MSAA, kMsaa, 4, cx, t + 444, cw);
-    MakeCombo(ID_ANISO, kAniso, 5, cx, t + 482, cw);
-    MakeCombo(ID_SHARPEN, kSharpen, 4, cx, t + 520, cw);
-    MakeCombo(ID_HITFLASH, kHitFlash, 3, cx, t + 558, cw);
-    MakeCombo(ID_PADS, kPads, 4, cx, t + 596, cw);
-    g_hdUse = MakeCheck(L"Use the HD texture pack", ID_HD_USE, x, t + 672, 400);
-    g_hd = Make(L"EDIT", L"", ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP, ID_HD_EDIT, x, t + 708, fw - 130, 36);
-    Make(L"BUTTON", L"Browse...", BS_PUSHBUTTON | WS_TABSTOP, ID_HD_BROWSE, x + fw - 120, t + 708, 120, 36);
-    g_hdStatus = Make(L"STATIC", L"", SS_LEFT, ID_HD_STATUS, x, t + 750, fw - 370, 46, g_smallFont);
-    Make(L"BUTTON", L"Logs", BS_PUSHBUTTON | WS_TABSTOP, ID_LOGS, x + fw - 350, t + 752, 170, 38, g_smallFont);
-    Make(L"BUTTON", L"Uninstall", BS_PUSHBUTTON | WS_TABSTOP, ID_UNINSTALL, x + fw - 170, t + 752, 170, 38, g_smallFont);
+    MakeCombo(ID_MONITOR, kMonitor, g_nMonitors, cx, t + 366, cw);
+    MakeCombo(ID_SCALE, kScale, 6, cx, t + 402, cw);
+    MakeCombo(ID_DRAWDIST, kDrawDist, 4, cx, t + 438, cw);
+    MakeCombo(ID_MSAA, kMsaa, 4, cx, t + 474, cw);
+    MakeCombo(ID_ANISO, kAniso, 5, cx, t + 510, cw);
+    MakeCombo(ID_SHARPEN, kSharpen, 4, cx, t + 546, cw);
+    MakeCombo(ID_HITFLASH, kHitFlash, 3, cx, t + 582, cw);
+    MakeCombo(ID_PADS, kPads, 4, cx, t + 618, cw);
+    g_hdUse = MakeCheck(L"Use the HD texture pack", ID_HD_USE, x, t + 690, 400);
+    g_hd = Make(L"EDIT", L"", ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP, ID_HD_EDIT, x, t + 724, fw - 130, 34);
+    Make(L"BUTTON", L"Browse...", BS_PUSHBUTTON | WS_TABSTOP, ID_HD_BROWSE, x + fw - 120, t + 724, 120, 34);
+    g_hdStatus = Make(L"STATIC", L"", SS_LEFT, ID_HD_STATUS, x, t + 762, fw - 370, 36, g_smallFont);
+    Make(L"BUTTON", L"Logs", BS_PUSHBUTTON | WS_TABSTOP, ID_LOGS, x + fw - 350, t + 764, 170, 32, g_smallFont);
+    Make(L"BUTTON", L"Uninstall", BS_PUSHBUTTON | WS_TABSTOP, ID_UNINSTALL, x + fw - 170, t + 764, 170, 32, g_smallFont);
     Make(L"BUTTON", L"Controls", BS_PUSHBUTTON | WS_TABSTOP, ID_CONTROLS, x + fw - 200, t + 130, 200, 30, g_smallFont);
     Make(L"BUTTON", L"Cheats", BS_PUSHBUTTON | WS_TABSTOP, ID_CHEATS, x + fw - 200, t + 164, 200, 30, g_smallFont);
     LoadSettings();

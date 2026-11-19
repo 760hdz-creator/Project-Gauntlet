@@ -405,6 +405,7 @@ void gpu_init(void) {
             g_wide = 448.0f * aspect / 640.0f;
             if (g_wide < 1) g_wide = 1;
             if (g_wide > 3) g_wide = 3;
+            { extern float g_cull_x; g_cull_x = 1.0f / g_wide; }   /* game culling matches the wider view */
         }
     }
     if (g_msaa > 1) {
@@ -502,6 +503,7 @@ typedef struct {
     uint32_t last_frame;
     int w, h;
     int hd;   /* HD replacement entry still loading (hdtex.c), or -1 */
+    uint32_t made_frame;   /* frame the entry was created (GT_HDLAT: HD swap-in latency) */
     ID3D11Texture2D *tex; ID3D11ShaderResourceView *srv;
 } TexEntry;
 
@@ -513,6 +515,9 @@ static ID3D11ShaderResourceView *tex_srv(TexEntry *e) {
             if (e->srv) ID3D11ShaderResourceView_Release(e->srv);
             if (e->tex) { ID3D11Texture2D_Release(e->tex); e->tex = NULL; }
             e->srv = s; e->hd = -1;
+            static int lat = -1;
+            if (lat < 0) lat = getenv("GT_HDLAT") != NULL;
+            if (lat) LOG("[hdlat] %08X %dx%d ready after %u frames\n", e->addr, e->w, e->h, frame_no - e->made_frame);
         }
     }
     return e->srv;
@@ -787,7 +792,7 @@ static ID3D11ShaderResourceView *get_texture(int i, int *rect, int *tw, int *th)
         }
     }
     v->addr = addr; v->fmt = fmtw; v->pitch = pitch; v->w = w; v->h = h; v->pal_addr = pal_addr; v->pal_len = pal_len;
-    v->hash = hsh; v->last_frame = frame_no; v->hd = -1;
+    v->hash = hsh; v->last_frame = frame_no; v->hd = -1; v->made_frame = frame_no;
     if (f.kind == TF_I8 && f.swizzled && pal_len && hdtex_enabled() && (addr & 0x03FFFFFF) + (uint32_t)w * h <= RAM_SIZE &&
         pal_addr + pal_len * 4 <= RAM_SIZE) {
         uint8_t *lin = malloc((size_t)w * h);
@@ -1130,7 +1135,7 @@ static void apply_states(void) {
     ID3D11RasterizerState *rs = find_state(rast_states, n_rast, rk);
     if (!rs) {
         D3D11_RASTERIZER_DESC d = {0};
-        d.FillMode = D3D11_FILL_SOLID; d.DepthClipEnable = TRUE; d.ScissorEnable = FALSE;
+        d.FillMode = D3D11_FILL_SOLID; { extern float g_cull_far; d.DepthClipEnable = g_cull_far <= 1.0f; }   /* longer draw distance: no far clip */ d.ScissorEnable = FALSE;
         d.CullMode = !rk[0] ? D3D11_CULL_NONE : rk[1] == 0x404 ? D3D11_CULL_FRONT : D3D11_CULL_BACK;
         d.FrontCounterClockwise = (ff == 0x901) ^ cull_flip;
         ID3D11Device_CreateRasterizerState(dev, &d, &rs);

@@ -1213,6 +1213,13 @@ SOURCE_PATCHES = [
     # gt_quit_game (runtime main.c) exits the program instead, unless GT_QUIT=title.
     (0x602A0, "WR32((uint32_t)(0xBCDC40u), (uint32_t)((uint32_t)0x1u));",
      "gt_quit_game(); WR32((uint32_t)(0xBCDC40u), (uint32_t)((uint32_t)0x1u));", 1),
+    # 94A80 (MBWorldSphereClip, the game's object/world culling): camera +0x5C = far distance, +0x60/+0x64 = the
+    # horizontal planes of the original 4:3 view. Widescreen shows more to the sides, so x is scaled by g_cull_x
+    # (1 / widescreen factor) and the far distance by g_cull_far (launcher draw distance).
+    (0x94A80, "ST(0) = (ST(0)) + ((double)RDF32((uint32_t)(ecx + 0x5Cu)));",
+     "ST(0) = (ST(0)) + ((double)RDF32((uint32_t)(ecx + 0x5Cu)) * g_cull_far);", 1),
+    (0x94A80, "ST(0) = (ST(0)) * ((double)RDF32((uint32_t)(ecx + 0x64u)));",
+     "ST(0) = (ST(0)) * ((double)RDF32((uint32_t)(ecx + 0x64u)) * g_cull_x);", 1),
 ]
 
 

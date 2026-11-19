@@ -140,6 +140,9 @@ static void load_settings(void) {
 
 /* Frame-end wait (lifted 95FB0, see recomp/lift.py SOURCE_PATCHES): 34 ms = the original 29.4 fps cap, GT_FPS=60 -> 17 ms. */
 uint32_t g_frame_ms = 34;
+/* Culling (lift.py SOURCE_PATCHES on 94A80): g_cull_x widens the game's 4:3 side planes to the widescreen view
+ * (set by gpu_d3d11.c), g_cull_far scales its far distance (GT_DRAWDIST = percent, 100..400). */
+float g_cull_x = 1.0f, g_cull_far = 1.0f;
 
 /* The in-game "Quit Game?" confirmation: exit the program (the original returns to the title screen, GT_QUIT=title). */
 void gt_quit_game(void) {
@@ -159,6 +162,10 @@ int main(int argc, char **argv) {
     }
     load_settings();
     if (getenv("GT_FPS") && atoi(getenv("GT_FPS")) == 60) g_frame_ms = 17;
+    if (getenv("GT_DRAWDIST")) {
+        int d = atoi(getenv("GT_DRAWDIST"));
+        if (d >= 100 && d <= 400) g_cull_far = d / 100.0f;
+    }
     CreateDirectoryA("out", NULL);
     if (!GetConsoleWindow() && (GetStdHandle(STD_ERROR_HANDLE) == NULL ||
                                 GetStdHandle(STD_ERROR_HANDLE) == INVALID_HANDLE_VALUE))

@@ -9,6 +9,7 @@
 uint8_t *g_mem;
 uint32_t g_frame_ms = 34;
 void gt_quit_game(void) {}
+float g_cull_x = 1, g_cull_far = 1;
 
 typedef struct { uint32_t va; GuestFunc fn; } FuncEntry;
 extern const FuncEntry g_functable[];

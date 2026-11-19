@@ -21,7 +21,14 @@ Install
 
 Play
   Keyboard: arrows = D-pad, Enter = START, Backspace = BACK, Z/X/C/V = A/B/X/Y, F/G = Black/White,
-  Q/E = LT/RT, WASD = left stick. F11 or Alt+Enter = fullscreen, Esc = quit. Gamepads work through SDL.
+  Q/E = LT/RT, WASD = left stick. F11 or Alt+Enter = fullscreen, Esc = quit.
+  Controllers: up to 4 (GT_PADS in settings.ini), in connection order. Xbox, PlayStation 3/4/5, Switch Pro and
+  Joy-Con, Steam Controller / Steam Deck, 8BitDo and other USB or Bluetooth pads work through SDL3; buttons go by
+  position (the bottom face button is A). A pad SDL does not know gets a generic layout; rearrange its buttons
+  with GT_PADMAP, or add its SDL mapping line to <folder>/controllers.txt (kept by updates).
+  PlayStation and Switch pads over USB or Bluetooth read best with the udev rules from the steam-devices package
+  (Ubuntu/Debian/Fedora: sudo apt install steam-devices / sudo dnf install steam-devices; Arch: game-devices-udev).
+  Steam Deck: add gauntlet.sh to Steam as a non-Steam game so the built-in controls act as a gamepad.
   Settings: <folder>/settings.ini (the same GT_* keys as the Windows launcher). Log: <folder>/out/gauntlet.log.
   Saves: <folder>/out.
 

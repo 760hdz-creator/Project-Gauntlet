@@ -24,6 +24,15 @@ extern int g_log_kernel;
 #define LOG(...) do { fprintf(stderr, __VA_ARGS__); fflush(stderr); } while (0)
 _Noreturn void rt_fatal(const char *fmt, ...);
 
+/* host gamepads (pad_sdl.c): XINPUT_STATE layout; 0 = ok, 1167 = not connected */
+typedef struct {
+    uint16_t wButtons; uint8_t bLeftTrigger, bRightTrigger; int16_t sThumbLX, sThumbLY, sThumbRX, sThumbRY;
+} HostPad;
+typedef struct { uint32_t dwPacketNumber; HostPad Gamepad; } HostState;
+int pad_sdl_init(void);   /* 1: SDL3 gamepads in use (Windows: SDL3.dll next to the exe) */
+uint32_t pad_sdl_get_state(uint32_t port, HostState *s);
+uint32_t pad_sdl_set_state(uint32_t port, uint16_t *vib);   /* left (low frequency), right (high frequency) motor */
+
 /* memory */
 void mem_init(void);
 uint32_t mem_alloc(uint32_t size, uint32_t align);   /* guest RAM, zeroed; 0 on failure */

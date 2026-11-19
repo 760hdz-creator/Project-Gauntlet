@@ -139,7 +139,7 @@ _Noreturn void ExitProcess(UINT code);
 #define __declspec(x) __declspec_##x
 #define __declspec_thread _Thread_local
 
-/* XInput through SDL gamepads (hle.c loads it with LoadLibraryA / GetProcAddress) */
+/* hle.c falls back to LoadLibraryA("xinput*") only on Windows; here it returns NULL (gamepads: pad_sdl.c) */
 HMODULE LoadLibraryA(const char *name);
 void *GetProcAddress(HMODULE m, const char *name);
 

@@ -360,7 +360,8 @@ static int Uninstall(const std::wstring& dir) {
         SHFILEOPSTRUCTW op = {nullptr, FO_DELETE, from.c_str(), nullptr, FOF_NO_UI};
         SHFileOperationW(&op);
     }
-    for (auto f : {L"gauntlet.exe", L"gauntlet.ico", L"README.md", L"VERSION", L"settings.ini"})
+    for (auto f : {L"gauntlet.exe", L"gauntlet.ico", L"README.md", L"VERSION", L"settings.ini", L"SDL3.dll",
+                   L"gamecontrollerdb.txt"})
         DeleteFileW((dir + L"\\" + f).c_str());
     if (registered) {
         RegDeleteTreeW(HKEY_CURRENT_USER, kRegKey);

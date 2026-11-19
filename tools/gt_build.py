@@ -118,6 +118,7 @@ def build_linux(root, build, lifted, jobs):
     if os.path.isdir(lib):
         shutil.rmtree(lib)
     shutil.copytree(os.path.join(rt, "lib"), lib)
+    shutil.copy2(os.path.join(rt, "gamecontrollerdb.txt"), root)   # controller mappings (pad_sdl.c)
     libs = [os.path.join(lib, f) for f in sorted(os.listdir(lib)) if ".so" in f]
     exe = os.path.join(root, "gauntlet")
     code, out = run([cc, "-o", exe + ".new"] + [it[1] for it in items] + [os.path.join(rt, "libgtrt.a")] + libs +
@@ -218,6 +219,11 @@ def main():
     if code:
         fail("link failed:\n" + out[-3000:])
     os.replace(exe + ".new", exe)
+    # SDL3.dll + gamecontrollerdb.txt: every controller SDL knows (pad_sdl.c; without them, XInput pads only)
+    for f in ("SDL3.dll", "gamecontrollerdb.txt"):
+        src = os.path.join(KIT, "sdl3", f)
+        if os.path.exists(src):
+            shutil.copy2(src, os.path.join(root, f))
     with open(os.path.join(root, "build", "version.txt"), "w") as f:
         f.write(a.version + "\n")
     step("Done")

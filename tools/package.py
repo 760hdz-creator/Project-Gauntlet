@@ -18,6 +18,10 @@ import capstone
 ROOT = Path(__file__).resolve().parent.parent
 PY_VER = "3.15.0"
 PY_URL = f"https://www.python.org/ftp/python/{PY_VER}/python-{PY_VER}-embed-amd64.zip"
+SDL_VER = "3.4.18"   # same as the Linux package
+SDL_URL = f"https://github.com/libsdl-org/SDL/releases/download/release-{SDL_VER}/SDL3-{SDL_VER}-win32-x64.zip"
+GCDB_REV = "4e87e3c6c2574f49e1cdf8526b6f829b61e5ccb3"
+GCDB_URL = f"https://raw.githubusercontent.com/mdqinc/SDL_GameControllerDB/{GCDB_REV}/"
 SHIP = ["VERSION", "README.md", "recomp/lift.py", "recomp/hle.txt", "recomp/hooks.txt", "recomp/seeds_extra.txt",
         "recomp/include/*", "runtime/src/*", "tools/gt_build.py", "tools/extract_xiso.py", "tools/match_pdb.py",
         "tools/pdb2.py", "tools/xbedis.py", "installer/install_toolchain.ps1"]
@@ -51,7 +55,24 @@ def main():
         shutil.copy2(lic, out / "licenses" / ("capstone_" + lic.name))
     (out / "licenses").mkdir(exist_ok=True)
     shutil.copy2(out / "python" / "LICENSE.txt", out / "licenses" / "python_LICENSE.txt")
-    bad = [p for p in out.rglob("*") if p.is_file() and
+    # SDL3.dll (official release, zlib) + SDL_GameControllerDB (zlib, pinned commit): every controller SDL knows
+    # (runtime/src/pad_sdl.c); gt_build.py copies both next to gauntlet.exe
+    (out / "sdl3").mkdir()
+    for url, name in [(SDL_URL, Path(SDL_URL).name)] + [(GCDB_URL + f, "gcdb-" + GCDB_REV + "-" + f)
+                                                        for f in ("gamecontrollerdb.txt", "LICENSE")]:
+        if not (ROOT / "dist" / "_cache" / name).exists():
+            print("downloading " + url)
+            urllib.request.urlretrieve(url, ROOT / "dist" / "_cache" / name)
+    with zipfile.ZipFile(ROOT / "dist" / "_cache" / Path(SDL_URL).name) as z:
+        (out / "sdl3" / "SDL3.dll").write_bytes(z.read("SDL3.dll"))
+        lic = [n for n in z.namelist() if n.upper().startswith("LICENSE")]
+        if lic:
+            (out / "licenses" / "SDL3_LICENSE.txt").write_bytes(z.read(lic[0]))
+    shutil.copy2(ROOT / "dist" / "_cache" / ("gcdb-" + GCDB_REV + "-gamecontrollerdb.txt"),
+                 out / "sdl3" / "gamecontrollerdb.txt")
+    shutil.copy2(ROOT / "dist" / "_cache" / ("gcdb-" + GCDB_REV + "-LICENSE"),
+                 out / "licenses" / "SDL_GameControllerDB_LICENSE.txt")
+    bad =[p for p in out.rglob("*") if p.is_file() and
            any(fnmatch.fnmatch(p.relative_to(out).as_posix().lower(), f.lower()) for f in FORBIDDEN)]
     if bad:
         sys.exit("FORBIDDEN files staged: " + ", ".join(map(str, bad[:10])))

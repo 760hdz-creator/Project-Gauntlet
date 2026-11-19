@@ -1,4 +1,4 @@
-/* Linux: the game window, keyboard, monitors and XInput on SDL3 (see linux/include/windows.h).
+/* Linux: the game window, keyboard and monitors on SDL3 (gamepads: pad_sdl.c) (see linux/include/windows.h).
  * The window is an SDL_Window * used as the HWND (DXVK Native's SDL3 WSI takes it as the swap chain's window).
  * Every call here runs on the main thread: all guest threads are fibers on it, and sched_run pumps events. */
 #include <windows.h>
@@ -176,79 +176,6 @@ SHORT GetAsyncKeyState(int vk) {
     return down ? (SHORT)0x8000 : 0;
 }
 
-/* ---------------- XInput on SDL gamepads (slots 0..3 in connection order) ---------------- */
-typedef struct {
-    WORD wButtons; BYTE bLeftTrigger, bRightTrigger; SHORT sThumbLX, sThumbLY, sThumbRX, sThumbRY;
-} HostPad;
-typedef struct { DWORD dwPacketNumber; HostPad Gamepad; } HostState;
-static SDL_Gamepad *pads[4];
-static uint64_t next_scan;
-static DWORD packets[4];
-
-static void scan_pads(void) {
-    uint64_t now = SDL_GetTicks();
-    if (now < next_scan) return;
-    next_scan = now + 1000;
-    for (int k = 0; k < 4; k++)
-        if (pads[k] && !SDL_GamepadConnected(pads[k])) { SDL_CloseGamepad(pads[k]); pads[k] = NULL; LOG("[input] pad %d removed\n", k); }
-    int count = 0;
-    SDL_JoystickID *ids = SDL_GetGamepads(&count);
-    for (int i = 0; ids && i < count; i++) {
-        int open = 0;
-        for (int k = 0; k < 4; k++) open |= pads[k] && SDL_GetGamepadID(pads[k]) == ids[i];
-        if (open) continue;
-        for (int k = 0; k < 4; k++)
-            if (!pads[k]) {
-                if ((pads[k] = SDL_OpenGamepad(ids[i]))) {
-                    const char *name = SDL_GetGamepadName(pads[k]);
-                    LOG("[input] pad connected: %s, XInput slot %d\n", name ? name : "?", k);
-                }
-                break;
-            }
-    }
-    SDL_free(ids);
-}
-static SHORT axis(SDL_Gamepad *g, SDL_GamepadAxis a, int flip) {
-    int v = SDL_GetGamepadAxis(g, a);
-    if (flip) v = -v - 1;
-    return (SHORT)(v < -32768 ? -32768 : v > 32767 ? 32767 : v);
-}
-static DWORD WINAPI xinput_get_state(DWORD port, HostState *s) {
-    if (!g_video || port >= 4) return 1167;
-    scan_pads();
-    SDL_Gamepad *g = pads[port];
-    if (!g) return 1167;   /* ERROR_DEVICE_NOT_CONNECTED */
-    static const struct { SDL_GamepadButton b; WORD bit; } map[] = {
-        {SDL_GAMEPAD_BUTTON_DPAD_UP, 0x0001}, {SDL_GAMEPAD_BUTTON_DPAD_DOWN, 0x0002},
-        {SDL_GAMEPAD_BUTTON_DPAD_LEFT, 0x0004}, {SDL_GAMEPAD_BUTTON_DPAD_RIGHT, 0x0008},
-        {SDL_GAMEPAD_BUTTON_START, 0x0010}, {SDL_GAMEPAD_BUTTON_BACK, 0x0020},
-        {SDL_GAMEPAD_BUTTON_LEFT_STICK, 0x0040}, {SDL_GAMEPAD_BUTTON_RIGHT_STICK, 0x0080},
-        {SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, 0x0100}, {SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, 0x0200},
-        {SDL_GAMEPAD_BUTTON_SOUTH, 0x1000}, {SDL_GAMEPAD_BUTTON_EAST, 0x2000},
-        {SDL_GAMEPAD_BUTTON_WEST, 0x4000}, {SDL_GAMEPAD_BUTTON_NORTH, 0x8000},
-    };
-    memset(s, 0, sizeof *s);
-    for (size_t i = 0; i < sizeof map / sizeof map[0]; i++)
-        if (SDL_GetGamepadButton(g, map[i].b)) s->Gamepad.wButtons |= map[i].bit;
-    s->Gamepad.bLeftTrigger = (BYTE)(SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) * 255 / 32767);
-    s->Gamepad.bRightTrigger = (BYTE)(SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) * 255 / 32767);
-    s->Gamepad.sThumbLX = axis(g, SDL_GAMEPAD_AXIS_LEFTX, 0);
-    s->Gamepad.sThumbLY = axis(g, SDL_GAMEPAD_AXIS_LEFTY, 1);   /* XInput: up is positive */
-    s->Gamepad.sThumbRX = axis(g, SDL_GAMEPAD_AXIS_RIGHTX, 0);
-    s->Gamepad.sThumbRY = axis(g, SDL_GAMEPAD_AXIS_RIGHTY, 1);
-    s->dwPacketNumber = ++packets[port];
-    return 0;
-}
-static DWORD WINAPI xinput_set_state(DWORD port, WORD *vib) {
-    if (!g_video || port >= 4 || !pads[port]) return 1167;
-    SDL_RumbleGamepad(pads[port], vib[0], vib[1], 1000);
-    return 0;
-}
-
-HMODULE LoadLibraryA(const char *name) { return name && strcasestr(name, "xinput") ? (HMODULE)(uintptr_t)1 : NULL; }
-void *GetProcAddress(HMODULE m, const char *name) {
-    if (m != (HMODULE)(uintptr_t)1) return NULL;
-    if (!strcmp(name, "XInputGetState")) return (void *)xinput_get_state;
-    if (!strcmp(name, "XInputSetState")) return (void *)xinput_set_state;
-    return NULL;
-}
+/* gamepads: pad_sdl.c (shared with Windows). Nothing else loads libraries on Linux. */
+HMODULE LoadLibraryA(const char *name) { (void)name; return NULL; }
+void *GetProcAddress(HMODULE m, const char *name) { (void)m; (void)name; return NULL; }

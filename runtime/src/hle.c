@@ -1,5 +1,5 @@
 /* Host implementations of guest library functions (recomp/hle.txt).
- * XPP input: the game sees GT_PADS gamepads (default 1) on ports 0..N-1, fed by the host's XInput controllers
+ * XPP input: the game sees GT_PADS gamepads (default 1) on ports 0..N-1, fed by the host's controllers (pad_sdl.c)
  * (and the keyboard once there is a window).
  */
 #include <windows.h>
@@ -15,17 +15,19 @@ static void ret_std(X86Context *c, int nargs, uint32_t eax) {
     c->esp += 4 + 4 * nargs;
 }
 
-/* ---- host XInput (loaded dynamically so the exe runs without it) ---- */
-typedef struct {
-    WORD wButtons; BYTE bLeftTrigger, bRightTrigger; SHORT sThumbLX, sThumbLY, sThumbRX, sThumbRY;
-} HostPad;
-typedef struct { DWORD dwPacketNumber; HostPad Gamepad; } HostState;
-static DWORD (WINAPI *host_xinput_get_state)(DWORD, HostState *);
-static DWORD (WINAPI *host_xinput_set_state)(DWORD, WORD *);   /* XINPUT_VIBRATION: left, right */
+/* ---- host gamepads: SDL3 (every controller SDL knows, see pad_sdl.c); on Windows without SDL3.dll, XInput (loaded
+ * dynamically so the exe runs without it) ---- */
+static uint32_t (*host_xinput_get_state)(uint32_t, HostState *);
+static uint32_t (*host_xinput_set_state)(uint32_t, uint16_t *);   /* XINPUT_VIBRATION: left, right */
 
 static void host_xinput_init(void) {
     static int done;
     if (done++) return;
+    if (pad_sdl_init()) {
+        host_xinput_get_state = pad_sdl_get_state;
+        host_xinput_set_state = pad_sdl_set_state;
+        return;
+    }
     HMODULE m = LoadLibraryA("xinput1_4.dll");
     if (!m) m = LoadLibraryA("xinput9_1_0.dll");
     if (m) host_xinput_get_state = (void *)GetProcAddress(m, "XInputGetState");

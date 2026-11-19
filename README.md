@@ -32,7 +32,7 @@ Windows, with a Direct3D 11 renderer, HD texture packs, widescreen, 60 fps, MSAA
 - **Softer hit flash.** Characters hit in combat get a translucent white tint instead of a solid white
   silhouette (Soft by default; Full shows the original look, Off removes it).
 - **Borderless fullscreen.** Toggle with F11 or Alt+Enter.
-- **Up to 4 players** on XInput gamepads.
+- **Up to 4 players** on almost any controller: Xbox, PlayStation 3/4/5, Switch Pro and Joy-Con, Steam Controller, 8BitDo and other USB or Bluetooth pads (SDL3).
 - **Remappable controls.** Rebind keyboard keys and gamepad buttons in the launcher.
 - **Launcher.** Play, check for updates, change display and control settings, pick an HD pack, uninstall.
 - **Auto-update.** A new release is downloaded and the game is rebuilt from your installed data, without the disc.
@@ -91,7 +91,7 @@ Uninstalling never touches it.
 | START / BACK | Enter / Backspace |
 | | F11 or Alt+Enter: fullscreen |
 
-XInput gamepads work too. Set the number of players and remap keys and buttons in the launcher (**Controls**).
+Controllers work too: Xbox, PlayStation, Switch Pro, 8BitDo and most other pads (buttons go by position, so the bottom face button is A). A pad that is not recognised gets a generic layout; its SDL mapping line can go in `controllers.txt` in the game folder. Set the number of players and remap keys and buttons in the launcher (**Controls**).
 
 ![Launcher controls page](docs/images/launcher_controls.jpg)
 

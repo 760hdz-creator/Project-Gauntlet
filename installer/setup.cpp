@@ -44,7 +44,7 @@ static const wchar_t kShortcut[] = L"Project Gauntlet.lnk";
 enum { ID_ISO_EDIT = 200, ID_ISO_BROWSE, ID_DIR_EDIT, ID_DIR_BROWSE, ID_DESKTOP, ID_STARTMENU, ID_INSTALL, ID_PROGRESS,
        ID_STATUS, ID_HD_EDIT, ID_HD_BROWSE, ID_HD_USE, ID_HD_STATUS, ID_PLAY, ID_UPDATE, ID_UNINSTALL, ID_FULLSCREEN,
        ID_WIDESCREEN, ID_SCALE, ID_MSAA, ID_ANISO, ID_PADS, ID_SHARPEN, ID_FXAA, ID_CRT, ID_CONTROLS, ID_CTL_BACK,
-       ID_CTL_DEFAULTS, ID_FPS60, ID_KEY0 = 2000, ID_PADM0 = 2100 };
+       ID_CTL_DEFAULTS, ID_FPS60, ID_HITFLASH, ID_KEY0 = 2000, ID_PADM0 = 2100 };
 #define WM_APP_STATUS (WM_APP + 1)
 #define WM_APP_PROGRESS (WM_APP + 2)
 #define WM_APP_DONE (WM_APP + 3)
@@ -488,11 +488,13 @@ static const Choice kMsaa[] = {{L"Off", L"1"}, {L"2x MSAA", L"2"}, {L"4x MSAA (d
 static const Choice kAniso[] = {{L"Trilinear", L"1"}, {L"2x anisotropic", L"2"}, {L"4x anisotropic", L"4"},
                                 {L"8x anisotropic", L"8"}, {L"16x anisotropic (default)", nullptr}};
 static const Choice kPads[] = {{L"1 (default)", nullptr}, {L"2", L"2"}, {L"3", L"3"}, {L"4", L"4"}};
+static const Choice kHitFlash[] = {{L"Soft (default)", nullptr}, {L"Full (original)", L"100"}, {L"Off", L"0"}};
 static const Choice kSharpen[] = {{L"Off (default)", nullptr}, {L"Low", L"30"}, {L"Medium", L"60"}, {L"High", L"100"}};
 struct ComboSetting { int id; const wchar_t* key; const Choice* c; int n; };
 static const ComboSetting kCombos[] = {{ID_SCALE, L"GT_SCALE", kScale, 6}, {ID_MSAA, L"GT_MSAA", kMsaa, 4},
                                        {ID_ANISO, L"GT_ANISO", kAniso, 5}, {ID_PADS, L"GT_PADS", kPads, 4},
-                                       {ID_SHARPEN, L"GT_SHARPEN", kSharpen, 4}};
+                                       {ID_SHARPEN, L"GT_SHARPEN", kSharpen, 4},
+                                       {ID_HITFLASH, L"GT_HITFLASH", kHitFlash, 3}};
 
 static void UpdateHdStatus() {
     if (!g_hdStatus) return;
@@ -740,12 +742,13 @@ static void BuildArt(int w, int h) {
             DrawTextW(g_artDC, v.data(), (int)v.size(), &r, DT_SINGLELINE | DT_PATH_ELLIPSIS | DT_NOPREFIX);
         }
         text(x, t + 262, g_font, kAccent, L"Display");
-        text(x, t + 382, g_font, kText, L"Resolution");
-        text(x, t + 426, g_font, kText, L"Anti-aliasing");
-        text(x, t + 470, g_font, kText, L"Texture filtering");
-        text(x, t + 514, g_font, kText, L"Sharpening");
-        text(x, t + 558, g_font, kText, L"Players (gamepads)");
-        text(x, t + 608, g_font, kAccent, L"HD textures");
+        text(x, t + 378, g_font, kText, L"Resolution");
+        text(x, t + 418, g_font, kText, L"Anti-aliasing");
+        text(x, t + 458, g_font, kText, L"Texture filtering");
+        text(x, t + 498, g_font, kText, L"Sharpening");
+        text(x, t + 538, g_font, kText, L"Hit flash");
+        text(x, t + 578, g_font, kText, L"Players (gamepads)");
+        text(x, t + 622, g_font, kAccent, L"HD textures");
         return;
     }
     text(x, t + 24, g_titleFont, kAccent, g_updating ? L"Update Project Gauntlet" : L"Install Project Gauntlet");
@@ -924,7 +927,7 @@ static bool LauncherCommand(HWND h, int id, int code) {
     case ID_FULLSCREEN: case ID_WIDESCREEN: case ID_HD_USE: case ID_FXAA: case ID_CRT: case ID_FPS60:
         if (code == BN_CLICKED) SaveSettings();
         return true;
-    case ID_SCALE: case ID_MSAA: case ID_ANISO: case ID_PADS: case ID_SHARPEN:
+    case ID_SCALE: case ID_MSAA: case ID_ANISO: case ID_PADS: case ID_SHARPEN: case ID_HITFLASH:
         if (code == CBN_SELCHANGE) SaveSettings();
         return true;
     }
@@ -1053,15 +1056,16 @@ static void CreateLauncherControls() {
     MakeCheck(L"FXAA (smooths edges)", ID_FXAA, x, t + 334, 300);
     MakeCheck(L"CRT scanlines", ID_CRT, x + 320, t + 334, 300);
     MakeCheck(L"60 fps (beta)", ID_FPS60, x + 490, t + 296, 190);
-    MakeCombo(ID_SCALE, kScale, 6, cx, t + 376, cw);
-    MakeCombo(ID_MSAA, kMsaa, 4, cx, t + 420, cw);
-    MakeCombo(ID_ANISO, kAniso, 5, cx, t + 464, cw);
-    MakeCombo(ID_SHARPEN, kSharpen, 4, cx, t + 508, cw);
-    MakeCombo(ID_PADS, kPads, 4, cx, t + 552, cw);
-    g_hdUse = MakeCheck(L"Use the HD texture pack", ID_HD_USE, x, t + 646, 400);
-    g_hd = Make(L"EDIT", L"", ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP, ID_HD_EDIT, x, t + 686, fw - 130, 38);
-    Make(L"BUTTON", L"Browse...", BS_PUSHBUTTON | WS_TABSTOP, ID_HD_BROWSE, x + fw - 120, t + 686, 120, 38);
-    g_hdStatus = Make(L"STATIC", L"", SS_LEFT, ID_HD_STATUS, x, t + 734, fw - 190, 50, g_smallFont);
+    MakeCombo(ID_SCALE, kScale, 6, cx, t + 372, cw);
+    MakeCombo(ID_MSAA, kMsaa, 4, cx, t + 412, cw);
+    MakeCombo(ID_ANISO, kAniso, 5, cx, t + 452, cw);
+    MakeCombo(ID_SHARPEN, kSharpen, 4, cx, t + 492, cw);
+    MakeCombo(ID_HITFLASH, kHitFlash, 3, cx, t + 532, cw);
+    MakeCombo(ID_PADS, kPads, 4, cx, t + 572, cw);
+    g_hdUse = MakeCheck(L"Use the HD texture pack", ID_HD_USE, x, t + 656, 400);
+    g_hd = Make(L"EDIT", L"", ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP, ID_HD_EDIT, x, t + 694, fw - 130, 38);
+    Make(L"BUTTON", L"Browse...", BS_PUSHBUTTON | WS_TABSTOP, ID_HD_BROWSE, x + fw - 120, t + 694, 120, 38);
+    g_hdStatus = Make(L"STATIC", L"", SS_LEFT, ID_HD_STATUS, x, t + 738, fw - 190, 56, g_smallFont);
     Make(L"BUTTON", L"Uninstall", BS_PUSHBUTTON | WS_TABSTOP, ID_UNINSTALL, x + fw - 170, t + 740, 170, 40, g_smallFont);
     Make(L"BUTTON", L"Controls", BS_PUSHBUTTON | WS_TABSTOP, ID_CONTROLS, x + fw - 200, t + 130, 200, 64);
     LoadSettings();

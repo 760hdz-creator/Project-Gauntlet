@@ -976,6 +976,7 @@ static char *gen_ps(const PsKey *k) {
            "    else if (f == 4) p = a > r; else if (f == 5) p = a != r; else if (f == 6) p = a >= r;\n"
            "    if (!p) discard;\n"
            "  }\n"
+           "  o.a *= at.w;\n"
            "  return o;\n}\n");
     return s.p;
 }
@@ -1269,6 +1270,18 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
     pc.at[0] = (float)(KREG(K_ALPHA_REF) & 0xFF);
     pc.at[1] = (float)((KREG(K_ALPHA_FUNC) - 0x200) & 7);
     pc.at[2] = (KREG(K_ALPHA_TEST_EN) & 1) ? 1.f : 0.f;
+    pc.at[3] = 1.f;   /* output alpha scale */
+    {   /* Hit flash: the game overlays a hit model with a second pass, stage 1 = solid texture * full-white diffuse
+         * (x2), which clamps to flat white and stays up to ~1 s on knockback/death. GT_HITFLASH=0..100 scales that
+         * overlay's opacity (default 35; 100 = as the game draws it, 0 = no flash). */
+        static int hf = -1;
+        if (hf < 0) { const char *e = getenv("GT_HITFLASH"); hf = e ? atoi(e) : 35; if (hf < 0) hf = 0; if (hf > 100) hf = 100; }
+        if (hf < 100 && (KREG(K_COMB_CONTROL) & 0xFF) >= 2 && KREG(K_COMB_COLOR_ICW + 4) == 0x09040000 &&
+            KREG(K_COMB_ALPHA_ICW + 4) == 0x191C0000 && v[0].a[3][0] > 0.99f && v[0].a[3][1] > 0.99f && v[0].a[3][2] > 0.99f) {
+            if (!hf) return;
+            pc.at[3] = hf / 100.f;
+        }
+    }
     ID3D11DeviceContext_UpdateSubresource(ctx, (ID3D11Resource *)ps_cb, 0, NULL, &pc, 0, 0);
     ID3D11PixelShader *ps = get_ps(&key);
     if (!ps) return;
@@ -1304,6 +1317,26 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
     ID3D11DeviceContext_PSSetShaderResources(ctx, 0, 4, srvs);
     ID3D11DeviceContext_PSSetSamplers(ctx, 0, 4, smps);
     ID3D11DeviceContext_DrawIndexed(ctx, ni, 0, 0);
+    {   /* GT_FLASHLOG=1 (debug): per frame, the stage-0 textures drawn with the hit-flash setup (stage 1 = t1 * v0) */
+        static int fl = -1; static uint32_t fl_frame, fl_tex[64]; static int fl_n;
+        if (fl < 0) fl = getenv("GT_FLASHLOG") != NULL;
+        if (fl) {
+            if (frame_no != fl_frame) {
+                if (fl_n) {
+                    char buf[1024]; int n = 0;
+                    for (int i = 0; i < fl_n && n < 960; i++) n += snprintf(buf + n, sizeof buf - n, " %X", fl_tex[i]);
+                    LOG("[flash] f%u t=%.2f%s\n", fl_frame, sched_now_100ns() / 1e7, buf);
+                }
+                fl_frame = frame_no; fl_n = 0;
+            }
+            if ((KREG(K_COMB_CONTROL) & 0xFF) >= 2 && KREG(K_COMB_COLOR_ICW + 4) == 0x09040000 && v[0].a[3][0] > 0.99f) {
+                uint32_t t0 = KREG(K_TEX_OFFSET(0));
+                int k = 0;
+                while (k < fl_n && fl_tex[k] != t0) k++;
+                if (k == fl_n && fl_n < 64) fl_tex[fl_n++] = t0;
+            }
+        }
+    }
     {   /* GT_WHITEPROBE=N (debug, needs GT_MSAA=1): in frame N, log every draw that adds near-white pixels */
         static int wp = -1; static uint32_t last_white, ndraw;
         if (wp < 0) { const char *e = getenv("GT_WHITEPROBE"); wp = e ? atoi(e) : 0; }

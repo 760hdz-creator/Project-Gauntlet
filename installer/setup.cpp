@@ -381,18 +381,21 @@ static int Uninstall(const std::wstring& dir) {
 
 // ---- update check (forge releases, as in runtime/src/updater.c) ----
 // GET https url; body to *out, or to the file `to`.
+static bool g_allowHttp;   // GT_UPDATE_API test override only; releases are always fetched over https
 static bool HttpGet(const std::wstring& url, std::string* out, const wchar_t* to, DWORD* status = nullptr) {
     URL_COMPONENTS uc = {sizeof uc};
     wchar_t host[256], path[2048];
     uc.lpszHostName = host; uc.dwHostNameLength = 256;
     uc.lpszUrlPath = path; uc.dwUrlPathLength = 2048;
     if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) return false;
+    bool secure = uc.nScheme == INTERNET_SCHEME_HTTPS;
+    if (!secure && !g_allowHttp) return false;
     HINTERNET s = WinHttpOpen((L"ProjectGauntlet/" + std::wstring(kVersion)).c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                               nullptr, nullptr, 0);
     if (!s) return false;
     WinHttpSetTimeouts(s, 10000, 10000, 15000, 60000);
     HINTERNET c = WinHttpConnect(s, host, uc.nPort, 0);
-    HINTERNET r = c ? WinHttpOpenRequest(c, L"GET", path, nullptr, nullptr, nullptr, WINHTTP_FLAG_SECURE) : nullptr;
+    HINTERNET r = c ? WinHttpOpenRequest(c, L"GET", path, nullptr, nullptr, nullptr, secure ? WINHTTP_FLAG_SECURE : 0) : nullptr;
     bool ok = r && WinHttpSendRequest(r, L"Accept: application/json\r\n", (DWORD)-1, nullptr, 0, 0, 0) &&
               WinHttpReceiveResponse(r, nullptr);
     DWORD code = 0, cl = sizeof code;
@@ -441,12 +444,14 @@ static void CheckUpdates() {
     if (!asset) asset = "ProjectGauntlet-Setup";
     std::wstring api = L"https://git.8gramlabs.com/api/v1/repos/" +
                        (repo ? Widen(repo) : std::wstring(L"8gramlabs/Project-Gauntlet")) + L"/releases/latest";
+    if (const char* t = getenv("GT_UPDATE_API")) { api = Widen(t); g_allowHttp = true; }   // test server (may be http)
     std::string body, name;
     DWORD status = 0;
     bool ok = HttpGet(api, &body, nullptr, &status), newer = false;
     if (ok) {
         size_t pos = 0;
         JsonStr(body, "tag_name", pos, g_upd.tag);
+        if (!g_upd.tag.empty() && (g_upd.tag[0] == 'v' || g_upd.tag[0] == 'V')) g_upd.tag.erase(0, 1);   // "v0.2.0" -> "0.2.0"
         pos = 0;
         JsonStr(body, "body", pos, g_upd.notes);
         pos = 0;

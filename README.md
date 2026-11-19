@@ -5,7 +5,7 @@
 **Gauntlet: Dark Legacy (Xbox) rebuilt as a native Windows game.**
 
 A static recompilation by 8gram Labs: the original x86 game code is translated to C and compiled for 64-bit
-Windows, with a Direct3D 11 renderer, HD texture packs, widescreen, MSAA and a launcher.
+Windows, with a Direct3D 11 renderer, HD texture packs, widescreen, 60 fps, MSAA and a launcher.
 
 ![Launcher](docs/images/launcher.jpg)
 
@@ -25,10 +25,14 @@ Windows, with a Direct3D 11 renderer, HD texture packs, widescreen, MSAA and a l
 - **HD texture packs.** It loads PCSX2-format replacement packs made for the PS2 version, such as the community
   *Gauntlet Dark Legacy HD 2.0* pack. The PS2 texture hashes are rebuilt from the Xbox data, so the pack works
   unchanged.
-- **Anti-aliasing and filtering.** Up to 8x MSAA and 16x anisotropic filtering.
+- **60 fps (beta).** The Xbox game caps itself at 30 fps but times its game logic from the clock, so the cap can
+  be lifted without speeding the game up.
+- **Anti-aliasing and filtering.** Up to 8x MSAA, FXAA and 16x anisotropic filtering.
+- **Post-processing.** Optional sharpening (good with HD textures) and a CRT scanline look.
 - **Borderless fullscreen.** Toggle with F11 or Alt+Enter.
 - **Up to 4 players** on XInput gamepads.
-- **Launcher.** Play, check for updates, change display settings, pick an HD pack, uninstall.
+- **Remappable controls.** Rebind keyboard keys and gamepad buttons in the launcher.
+- **Launcher.** Play, check for updates, change display and control settings, pick an HD pack, uninstall.
 - **Auto-update.** A new release is downloaded and the game is rebuilt from your installed data, without the disc.
 
 ## HD textures: before and after
@@ -85,15 +89,17 @@ Uninstalling never touches it.
 | START / BACK | Enter / Backspace |
 | | F11 or Alt+Enter: fullscreen |
 
-XInput gamepads work too. Set the number of players in the launcher.
+XInput gamepads work too. Set the number of players and remap keys and buttons in the launcher (**Controls**).
+
+![Launcher controls page](docs/images/launcher_controls.jpg)
 
 ## Status
 
 The game boots and runs at full speed (30 fps, as on the Xbox). Every realm and boss up to the Lich and the Yeti
 has been played through, with saves, level progression and multiplayer working. Known gaps:
-- Some 2D text is missing ("Press START" in empty HUD panels, wizard subtitles).
-- Fog and fixed-function lighting are not implemented yet.
-- About 10% of the textures seen in a level have no match in the HD pack and stay original.
+- About 8% of the textures seen in a level stay original: the pack has no file for them (Xbox-only art such as
+  the A/B button icons, and some effect animations).
+- 60 fps is new: report anything that runs at the wrong speed.
 
 ## How it works
 
@@ -102,7 +108,8 @@ has been played through, with saves, level progression and multiplayer working. 
 - `runtime/` holds the Xbox kernel, file system and threads, DirectSound mixed in software, and a Direct3D 11
   translation of the NV2A push buffer.
 - `runtime/src/hdtex.c` matches textures against PCSX2 packs. It rebuilds the PS2 TEX0 hash by laying the indices
-  out as 256-byte GS memory blocks, and the CLUT hash from the palette.
+  out as 256-byte GS memory blocks, and the CLUT hash from the palette. When a pack has several palette variants of
+  one texture, it picks the closest by image comparison. Loaded HD textures stay within a VRAM budget.
 - `installer/` holds the setup and launcher (one Win32 exe), and `tools/gt_build.py` runs the on-PC build.
 
 See [docs/design.md](docs/design.md) and [docs/installer.md](docs/installer.md) for the details.

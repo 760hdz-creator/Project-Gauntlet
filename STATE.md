@@ -367,11 +367,27 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   load_settings (env wins). HD pack used in place (GT_HDTEX), not copied. User's install C:\Games\Project Gauntlet
   updated with it. Not click-tested by hand yet.
 
+- 2026-11-18: 0.2.0 WORK.
+  - HD misses: of 61 in A1, 48 have no file in the pack (Xbox-only art: A/B icons, legal screens; effect frames);
+    9 more now match through `pick` (several palette variants of one TEX0: decode each, box-filter to the original
+    size, take the closest, mean channel diff <= 40). VRAM budget GT_HDVRAM (default half the adapter, 512..4096 MB):
+    textures no cache entry holds are freed oldest first; gpu_d3d11.c drops cache entries idle 3 s when over budget.
+  - Fog/lighting: no run log ever hit the "not implemented" warnings (78 logs, every realm): the game does not use them.
+  - HD "font size" difference was the random hero name (JUSTIN vs TRENT), not the pack.
+  - Post-processing in present (GT_SHARPEN 0..100, GT_FXAA=1, GT_CRT=1); GT_SHOTBB=1 saves the presented frame.
+  - Controls: GT_KEYS (18 hex VKs) / GT_PADMAP (14 sources) in hle.c; launcher Controls page writes them.
+  - 60 FPS: the frame end (95FB0) busy-waits until GetTickCount - last >= 34 ms; ClockOncePerFrame (2C700) derives
+    dt from the elapsed 60 Hz vsync count ([14E5AC], built from GetTickCount in A9310), so a 17 ms wait keeps game
+    speed (walk speed and cutscene lengths match). lift.py SOURCE_PATCHES -> g_frame_ms (main.c, GT_FPS=60).
+    A1 soak at 58-59 fps: combat, exit, shop, Tower. Debug: GT_TICKLOG, GT_POSLOG, GT_VBLANKHZ.
+  - Missing text: "Press START" in HUD panels is never drawn by the Xbox code (string refs: attract, title, select
+    only; not in TEXT/ENGLISH.ROM). The wizard bars are the cinematic letterbox; no caption call in that scene.
+    Neither is a confirmed bug without a hardware reference.
+  - Installed 0.2.0 over C:\Games\Project Gauntlet with --update (55 s); installed game at 58.7 fps with the pack.
+
 ## Next
-0. User click-through of the launcher (Play, Browse, Uninstall). Then release 0.2.0 when the user says push (bump
-   VERSION, build, publish on forge + GitLab). HD misses (61/636): check GT_HDLOG miss lines; VRAM budget for hdtex.
-1. Missing text: "Press START" in empty HUD panels and the wizard subtitles in the cutscene bars (above).
-   Then test the other characters (routes only use the default hero), GARM movie (level id 0x2B) and the
+0. Hand-test the launcher (Play, Update download, Uninstall, Browse) and 60 fps in more levels / bosses.
+1. Test the other characters (routes only use the default hero), GARM movie (level id 0x2B) and the
    legend item movies. Check the white-player frames in A1. Watch for crashes, missed targets and the
    one-time gpu warnings (fog: gpu_d3d11.c "fog not implemented"; lighting). Unresolved, low priority: walking onto
    pad III did not fire (dist 4.9-5.8); the targeted cheat bypasses it. Level timing drifts: use anchors.

@@ -71,6 +71,11 @@ the game is lifted and compiled on the player's PC from their own disc image.
   msaa 8, widescreen 1.672, back buffer 3440x1440, hdtex 19633 textures from the pack folder. Update check against
   the forge with no release (404) shows "Up to date".
 
+- 2026-11-18 0.2.0: setup `--update --dir C:\Games\Project Gauntlet` (~55 s, settings.ini kept); the on-PC
+  lift applies SOURCE_PATCHES (g_frame_ms in build\lifted_003.c); the installed game ran at 58.7 fps with GT_FPS=60.
+  Launcher driven by BM_CLICK / posted WM_KEYDOWN: Controls page, key capture (A -> X unbinds B), Back, settings
+  written (GT_KEYS, GT_FPS, GT_FXAA, GT_SHARPEN). Uninstall still not run from the launcher.
+
 ## Open
 - Launcher not click-tested by hand (Play, Update download, Uninstall from the launcher, HD Browse); fresh install
   with the HD picker not run.

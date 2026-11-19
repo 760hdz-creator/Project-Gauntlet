@@ -464,6 +464,11 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   the install root; uninstall lists updated. GT_PADTEST=1 = virtual-pad self test: 35/35 on Windows (built in
   G:\gt-linux\out\win against out\lifted) and Linux. XInput fallback checked (SDL3.dll renamed). No real pad on
   this PC: hand test with a real Xbox / PlayStation pad still needed before release.
+  - User chose: into 0.2.0. `linux` fast-forwarded into main (local only). Fresh Windows relift.sh + build: A1 route
+    (GT_INPUT=@out/input_char-1.txt, run from the repo root) 180 s, no crash, no missed targets, padtest 35/35.
+    dist\ProjectGauntlet-Setup-0.2.0.exe rebuilt (payload has sdl3/SDL3.dll + gamecontrollerdb.txt + pad_sdl.c);
+    gt_build.py from that payload into G:\gt-wintest: 59 s, SDL3.dll + DB copied, padtest 35/35 from a foreign cwd.
+    Linux tarball not rebuilt since the controller commits: rerun pk.sh (WSL ~/gt/repo clone) before release.
 
 ## Next
 0. User is playtesting. When they say it is good: move tag v0.2.0 to HEAD (force-push the tag to both remotes; ask

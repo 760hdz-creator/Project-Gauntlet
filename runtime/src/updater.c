@@ -6,7 +6,9 @@
  * Off for dev builds (no GT_VERSION), scripted test runs (GT_INPUT) and GT_NOUPDATE=1.
  * Testing: GT_UPDATE_REPO=<owner/repo> and GT_UPDATE_ASSET=<asset name prefix> check another forge repo. */
 #include <windows.h>
+#ifdef _WIN32
 #include <winhttp.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,6 +25,7 @@
 #define UPD_PATH L"/api/v1/repos/8gramlabs/Project-Gauntlet/releases/latest"
 #define UPD_ASSET "ProjectGauntlet-Setup"
 
+#ifdef _WIN32
 /* GET https://host/path (host NULL: url is a full https URL). Body to *out (malloc'd) or to file `to`. */
 static int http_get(const wchar_t *url, char **out, size_t *len, const wchar_t *to) {
     URL_COMPONENTS uc = {sizeof uc};
@@ -61,6 +64,8 @@ static int http_get(const wchar_t *url, char **out, size_t *len, const wchar_t *
     return ok;
 }
 
+#endif
+
 /* The JSON string value after "key": starting at *pos (advanced past it); unescapes \" \\ \/ \n. */
 static int json_str(const char *j, const char *key, size_t *pos, char *dst, size_t cap) {
     char pat[64];
@@ -88,6 +93,114 @@ static unsigned long long ver_num(const char *v) {
     return ((unsigned long long)a << 40) | ((unsigned long long)b << 20) | c;
 }
 
+#ifndef _WIN32
+/* Linux: curl does the HTTPS (no TLS library in the game), zenity or kdialog asks; the asset is the Linux
+ * package ProjectGauntlet-Linux-<ver>.tar.gz, whose setup.sh --update --dir <install> rebuilds and restarts. */
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+extern char **environ;
+
+static int run_argv(char *const argv[], char **out) {
+    int pipefd[2] = {-1, -1};
+    posix_spawn_file_actions_t fa;
+    posix_spawn_file_actions_init(&fa);
+    if (out) {
+        if (pipe(pipefd)) return -1;
+        posix_spawn_file_actions_adddup2(&fa, pipefd[1], 1);
+        posix_spawn_file_actions_addclose(&fa, pipefd[0]);
+    }
+    pid_t pid;
+    int r = posix_spawnp(&pid, argv[0], &fa, NULL, argv, environ);
+    posix_spawn_file_actions_destroy(&fa);
+    if (out) close(pipefd[1]);
+    if (r) { if (out) close(pipefd[0]); return -1; }
+    if (out) {
+        size_t n = 0, cap = 65536;
+        char *buf = malloc(cap);
+        ssize_t got;
+        while ((got = read(pipefd[0], buf + n, cap - n - 1)) > 0) {
+            n += (size_t)got;
+            if (cap - n < 4096) { cap *= 2; buf = realloc(buf, cap); }
+        }
+        close(pipefd[0]);
+        buf[n] = 0;
+        *out = buf;
+    }
+    int st = 0;
+    waitpid(pid, &st, 0);
+    return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+}
+
+/* yes/no dialog: 1 yes, 0 no, -1 no dialog tool */
+static int ask(const char *title, const char *msg) {
+    char *z[] = {"zenity", "--question", "--title", (char *)title, "--text", (char *)msg, "--width=480", NULL};
+    int r = run_argv(z, NULL);
+    if (r == 0 || r == 1) return r == 0;
+    char *k[] = {"kdialog", "--title", (char *)title, "--yesno", (char *)msg, NULL};
+    r = run_argv(k, NULL);
+    if (r == 0 || r == 1) return r == 0;
+    return -1;
+}
+
+static DWORD WINAPI update_thread(void *arg) {
+    (void)arg;
+    char *body = NULL;
+    const char *repo = getenv("GT_UPDATE_REPO"), *asset = getenv("GT_UPDATE_ASSET");
+    if (!asset) asset = "ProjectGauntlet-Linux";
+    char api[512];
+    snprintf(api, sizeof api, "https://git.8gramlabs.com/api/v1/repos/%s/releases/latest",
+             repo ? repo : "8gramlabs/Project-Gauntlet");
+    char *get[] = {"curl", "-sfL", "--max-time", "15", "-H", "Accept: application/json", api, NULL};
+    if (run_argv(get, &body) != 0 || !body || !*body) {
+        LOG("[update] no release found (or curl missing)\n");
+        free(body);
+        return 0;
+    }
+    char tag[64] = "", notes[1024] = "", url[1024] = "", name[256];
+    size_t pos = 0;
+    json_str(body, "tag_name", &pos, tag, sizeof tag);
+    pos = 0;
+    json_str(body, "body", &pos, notes, sizeof notes);
+    pos = 0;
+    while (json_str(body, "name", &pos, name, sizeof name)) {
+        if (!strncmp(name, asset, strlen(asset)) && strstr(name, ".tar.gz")) {
+            json_str(body, "browser_download_url", &pos, url, sizeof url);
+            break;
+        }
+    }
+    free(body);
+    if (!tag[0] || !url[0] || ver_num(tag) <= ver_num(GT_VERSION)) {
+        LOG("[update] up to date (installed %s, latest %s)\n", GT_VERSION, tag[0] ? tag : "none");
+        return 0;
+    }
+    LOG("[update] %s available (installed %s): %s\n", tag, GT_VERSION, url);
+    char msg[1600];
+    snprintf(msg, sizeof msg, "Project Gauntlet %s is available (you have %s).\n\n%.900s\n\n"
+             "Update now? The game closes, the update rebuilds it (a few minutes) and starts it again.",
+             tag, GT_VERSION, notes);
+    if (ask("Project Gauntlet update", msg) != 1) return 0;
+    char tmp[] = "/tmp/gauntlet-update-XXXXXX";
+    if (!mkdtemp(tmp)) return 0;
+    char tgz[MAX_PATH], dir[MAX_PATH], setup[MAX_PATH];
+    snprintf(tgz, sizeof tgz, "%s/update.tar.gz", tmp);
+    char *dl[] = {"curl", "-sfL", "--max-time", "600", "-o", tgz, url, NULL};
+    char *untar[] = {"tar", "-xzf", tgz, "-C", tmp, "--strip-components=1", NULL};
+    if (run_argv(dl, NULL) != 0 || run_argv(untar, NULL) != 0) {
+        LOG("[update] download failed\n");
+        return 0;
+    }
+    if (!getcwd(dir, sizeof dir)) return 0;   /* the game runs from its install folder */
+    snprintf(setup, sizeof setup, "%s/setup.sh", tmp);
+    char *up[] = {"/bin/sh", setup, "--update", "--dir", dir, "--play", NULL};
+    pid_t pid;
+    posix_spawnattr_t at;
+    posix_spawnattr_init(&at);
+    posix_spawnattr_setflags(&at, POSIX_SPAWN_SETSID);
+    if (posix_spawn(&pid, up[0], NULL, &at, up, environ) == 0) ExitProcess(0);
+    return 0;
+}
+#else
 static DWORD WINAPI update_thread(void *arg) {
     (void)arg;
     char *body = NULL;
@@ -148,6 +261,8 @@ static DWORD WINAPI update_thread(void *arg) {
     }
     return 0;
 }
+
+#endif
 
 void updater_start(void) {
     const char *no = getenv("GT_NOUPDATE");

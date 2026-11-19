@@ -3,6 +3,35 @@
 #include <windows.h>
 #include <stdlib.h>
 #include "rt.h"
+#ifndef _WIN32
+/* Linux: fibers on ucontext, each with an 8 MB lazily committed stack (DXVK, vkd3d's HLSL compiler and the
+ * Vulkan driver also run on these stacks: more room than the 256 KB Windows fibers). */
+#include <sys/mman.h>
+#include <ucontext.h>
+static ucontext_t main_uc;
+static ucontext_t *running_uc = &main_uc;
+static void fiber_tramp(void);
+#define FIBER_STACK (8u << 20)
+static void *ConvertThreadToFiber(void *p) { (void)p; return &main_uc; }
+static void *CreateFiber(size_t size, void (*fn)(void *), void *arg) {
+    (void)size; (void)fn; (void)arg;   /* fiber_tramp starts sched_current() */
+    ucontext_t *uc = calloc(1, sizeof *uc);
+    uint8_t *stk = mmap(NULL, FIBER_STACK, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (stk == MAP_FAILED) return NULL;
+    mprotect(stk, 4096, PROT_NONE);   /* guard page */
+    getcontext(uc);
+    uc->uc_stack.ss_sp = stk;
+    uc->uc_stack.ss_size = FIBER_STACK;
+    uc->uc_link = NULL;
+    makecontext(uc, fiber_tramp, 0);
+    return uc;
+}
+static void SwitchToFiber(void *f) {
+    ucontext_t *from = running_uc;
+    running_uc = f;
+    swapcontext(from, f);
+}
+#endif
 
 /* Guest KPCR layout (subset used by XDK code). */
 #define KPCR_SIZE        0x300
@@ -47,7 +76,7 @@ GThread *sched_current(void) { return current; }
  * would starve the others. Polling points call this to yield after 1 ms of continuous running. */
 static uint64_t slice_start;
 void sched_maybe_yield(void) {
-    if (current && sched_now_100ns() - slice_start >= 10000) sched_yield();
+    if (current && sched_now_100ns() - slice_start >= 10000) gt_sched_yield();
 }
 uint32_t sched_thread_object(GThread *t) { return t->kthread; }
 
@@ -71,6 +100,9 @@ static void WINAPI fiber_main(void *p) {
     }
     sched_exit_thread(c->eax);
 }
+#ifndef _WIN32
+static void fiber_tramp(void) { fiber_main(sched_current()); }
+#endif
 
 GThread *sched_create_thread(uint32_t start, uint32_t arg1, uint32_t arg2, uint32_t routine, uint32_t stack_size,
                              uint32_t tls_size, int suspended) {
@@ -125,7 +157,7 @@ void guest_call(X86Context *c, uint32_t va, int nargs, const uint32_t *args) {
     x86_call_indirect(c, va);
 }
 
-void sched_yield(void) {
+void gt_sched_yield(void) {
     SwitchToFiber(main_fiber);
 }
 
@@ -161,10 +193,13 @@ void sched_run(void) {
         }
         if (!alive) return;
         kernel_poll();
+#ifndef _WIN32
+        linux_pump_events();   /* SDL events belong to this (main) thread; the Windows build has a window thread */
+#endif
         Sleep(0);
     }
 }
 
 void sched_sleep_until(uint64_t t100ns) {
-    while (sched_now_100ns() < t100ns) sched_yield();
+    while (sched_now_100ns() < t100ns) gt_sched_yield();
 }

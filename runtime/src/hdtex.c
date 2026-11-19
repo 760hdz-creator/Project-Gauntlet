@@ -25,7 +25,11 @@
 #define COBJMACROS
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#ifdef _WIN32
 #include <wincodec.h>
+#else
+#include "linux/stb_image.h"   /* PNG decoding (linux/stb_image.c) */
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -116,6 +120,23 @@ static CRITICAL_SECTION q_lock;
 static HANDLE q_sem;     /* one count per queued id; several loader threads take from the queue */
 static int q_buf[4096]; static unsigned q_head, q_tail;
 static ID3D11Device *q_dev;
+#ifndef _WIN32
+/* PNG -> RGBA8 (R in the low byte, like WIC's 32bppRGBA) with GS alpha (0x80 = 1.0) scaled to 8 bits. NULL on failure. */
+static uint32_t *decode_png(const char *path, UINT *pw, UINT *ph) {
+    char host[MAX_PATH];
+    int w = 0, h = 0, n = 0;
+    win32_host_path(path, host);
+    uint32_t *px = (uint32_t *)stbi_load(host, &w, &h, &n, 4);
+    if (!px) return NULL;
+    if (w <= 0 || h <= 0 || w > 8192 || h > 8192) { stbi_image_free(px); return NULL; }
+    for (size_t i = 0, k = (size_t)w * h; i < k; i++) {
+        uint32_t c = px[i], a = c >> 24;
+        px[i] = (c & 0xFFFFFF) | (a >= 0x80 ? 255 : a * 2) << 24;
+    }
+    *pw = (UINT)w; *ph = (UINT)h;
+    return px;   /* stb_image allocates with malloc: free() as for the WIC path */
+}
+#else
 static __declspec(thread) IWICImagingFactory *wic;   /* one factory per loader thread */
 
 /* PNG -> RGBA8 (R in the low byte) with GS alpha (0x80 = 1.0) scaled to 8 bits. NULL on failure. */
@@ -149,6 +170,7 @@ out:
     if (dec) IWICBitmapDecoder_Release(dec);
     return px;
 }
+#endif
 
 /* Mean per-channel difference (0..255) between an HD image box-filtered down to rw x rh and the original.
  * Colour counts only where the original is visible. */
@@ -231,12 +253,14 @@ static int pick(Entry *e) {
 
 static DWORD WINAPI loader_thread(LPVOID unused) {
     (void)unused;
+#ifdef _WIN32
     CoInitializeEx(NULL, COINIT_MULTITHREADED);
     if (FAILED(CoCreateInstance(&CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, &IID_IWICImagingFactory, (void **)&wic))) {
         LOG("[hdtex] WIC unavailable, HD textures off\n");
         g_enabled = 0;
         return 0;
     }
+#endif
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     for (;;) {
         WaitForSingleObject(q_sem, INFINITE);

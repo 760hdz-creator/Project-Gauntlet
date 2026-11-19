@@ -250,6 +250,32 @@ static void mix(int16_t *dst, int n) {
     if (dump) fwrite(dst, 4, (size_t)n, dump);
 }
 
+#ifndef _WIN32
+/* Linux: SDL3 audio stream, kept 3 buffers (60 ms) ahead like the waveOut queue. */
+#include <SDL3/SDL.h>
+static DWORD WINAPI mixer_thread(void *arg) {
+    (void)arg;
+    static int16_t pcm[2 * OUT_FRAMES];
+    SDL_AudioStream *st = NULL;
+    const char *no = getenv("GT_NOAUDIO");
+    if (!(no && *no == '1') && SDL_InitSubSystem(SDL_INIT_AUDIO)) {
+        SDL_AudioSpec spec = {SDL_AUDIO_S16LE, 2, OUT_RATE};
+        st = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
+        if (st) SDL_ResumeAudioStreamDevice(st);
+    }
+    LOG("[dsound] mixer: %s\n", st ? "SDL audio 48 kHz" : "no output device (silent, paced)");
+    if (!st) {
+        for (;;) { mix(pcm, OUT_FRAMES); Sleep(OUT_FRAMES * 1000 / OUT_RATE); }
+    }
+    for (;;) {
+        while (SDL_GetAudioStreamQueued(st) < OUT_BUFS * (int)sizeof pcm) {
+            mix(pcm, OUT_FRAMES);
+            SDL_PutAudioStreamData(st, pcm, sizeof pcm);
+        }
+        Sleep(5);
+    }
+}
+#else
 static DWORD WINAPI mixer_thread(void *arg) {
     (void)arg;
     static int16_t pcm[OUT_BUFS][2 * OUT_FRAMES];
@@ -282,6 +308,7 @@ static DWORD WINAPI mixer_thread(void *arg) {
         }
     }
 }
+#endif
 
 static void dsound_init(void) {
     static int done;

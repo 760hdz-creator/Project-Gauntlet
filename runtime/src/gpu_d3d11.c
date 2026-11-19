@@ -37,6 +37,7 @@ static int gpu_ok;
 static uint32_t frame_no;
 
 /* ---------------- window ---------------- */
+#ifdef _WIN32   /* Linux: linux/sdl_plat.c (SDL3 window, events on the main thread) */
 
 /* Borderless fullscreen on the window's monitor; F11 or Alt+Enter toggles, GT_FULLSCREEN=1 starts in it. */
 static void toggle_fullscreen(HWND h) {
@@ -139,6 +140,7 @@ static DWORD WINAPI window_thread(LPVOID ev) {
     while (GetMessageW(&msg, NULL, 0, 0) > 0) { TranslateMessage(&msg); DispatchMessageW(&msg); }
     return 0;
 }
+#endif
 
 /* ---------------- shaders ---------------- */
 
@@ -367,10 +369,15 @@ void gpu_init(void) {
     if (gpu_ok) return;
     gpu_ok = -1;
     gpu_tid = GetCurrentThreadId();
+#ifdef _WIN32
     HANDLE ev = CreateEventW(NULL, TRUE, FALSE, NULL);
     CreateThread(NULL, 0, window_thread, ev, 0, NULL);
     WaitForSingleObject(ev, INFINITE);
     CloseHandle(ev);
+#else
+    g_hwnd = linux_create_window();
+    if (!g_hwnd) return;
+#endif
 
     DXGI_SWAP_CHAIN_DESC sd = {0};
     sd.BufferCount = 2;

@@ -44,7 +44,7 @@ uint32_t sched_thread_object(GThread *t);            /* guest KTHREAD address */
 GThread *sched_create_host_thread(void (*fn)(X86Context *c));
 /* Call a guest stdcall/cdecl function from host code running on a guest thread. */
 void guest_call(X86Context *c, uint32_t va, int nargs, const uint32_t *args);
-void sched_yield(void);
+void gt_sched_yield(void);
 void sched_maybe_yield(void);                        /* yield if the current slice exceeded 1 ms */                              /* let other threads run */
 _Noreturn void sched_exit_thread(uint32_t status);
 void sched_run(void);                                 /* main loop; returns when all threads exit */
@@ -77,3 +77,9 @@ void nv2a_vblank(void);                              /* called at 60 Hz by kerne
 /* file system (fs.c) */
 void fs_register(KHandler *handlers);
 void fs_close(Handle *h);
+
+#ifndef _WIN32
+/* Linux (linux/win32.c): argv kept for the HalReturnToFirmware relaunch (execv of /proc/self/exe) */
+void linux_set_argv(char **argv);
+_Noreturn void linux_relaunch(void);
+#endif

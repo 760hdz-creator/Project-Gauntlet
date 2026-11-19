@@ -76,6 +76,7 @@ void x87_store80(uint32_t a, double v) {
     WR16(a + 8, se);
 }
 
+#ifdef _WIN32
 static LONG WINAPI crash_handler(EXCEPTION_POINTERS *ep) {
     EXCEPTION_RECORD *r = ep->ExceptionRecord;
     uintptr_t addr = r->NumberParameters >= 2 ? (uintptr_t)r->ExceptionInformation[1] : 0;
@@ -137,6 +138,58 @@ static void load_settings(void) {
         *eq = L'=';
     }
 }
+#else
+/* Linux: SIGSEGV/SIGBUS/SIGILL/SIGFPE report the faulting guest address (on an alternate stack: a fiber's stack
+ * may be the thing that overflowed), the same FATAL line as Windows. */
+#include <signal.h>
+#include <ucontext.h>
+#include <unistd.h>
+#include <execinfo.h>
+static void crash_handler(int sig, siginfo_t *si, void *uc_) {
+    ucontext_t *uc = uc_;
+    uintptr_t addr = (uintptr_t)si->si_addr;
+    LOG("FATAL: host signal %d at %p, data %p (guest %08llX)\n", sig, (void *)uc->uc_mcontext.gregs[REG_RIP],
+        (void *)addr, (unsigned long long)(addr - (uintptr_t)g_mem));
+    void *bt[24];
+    int n = backtrace(bt, 24);
+    backtrace_symbols_fd(bt, n, 2);
+    _exit(3);
+}
+static void crash_handler_install(void) {
+    static uint8_t alt[256 * 1024];
+    stack_t ss = {.ss_sp = alt, .ss_size = sizeof alt};
+    sigaltstack(&ss, NULL);
+    struct sigaction sa = {0};
+    sa.sa_sigaction = crash_handler;
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSEGV, &sa, NULL);
+    sigaction(SIGBUS, &sa, NULL);
+    sigaction(SIGILL, &sa, NULL);
+    sigaction(SIGFPE, &sa, NULL);
+}
+
+void updater_start(void);
+
+/* settings.ini [settings]: GT_* keys become environment variables unless already set (as on Windows). */
+static void load_settings(void) {
+    FILE *f = fopen("settings.ini", "r");
+    if (!f) return;
+    char line[1024];
+    int in_settings = 0;
+    while (fgets(line, sizeof line, f)) {
+        char *s = line, *e = line + strlen(line);
+        while (e > s && (e[-1] == '\n' || e[-1] == '\r' || e[-1] == ' ' || e[-1] == '\t')) *--e = 0;
+        while (*s == ' ' || *s == '\t') s++;
+        if (*s == '[') { in_settings = !strncasecmp(s, "[settings]", 10); continue; }
+        char *eq = strchr(s, '=');
+        if (!in_settings || !eq || strncmp(s, "GT_", 3)) continue;
+        *eq = 0;
+        if (!getenv(s)) setenv(s, eq + 1, 0);
+    }
+    fclose(f);
+}
+#endif
 
 /* Frame-end wait (lifted 95FB0, see recomp/lift.py SOURCE_PATCHES): 34 ms = the original 29.4 fps cap, GT_FPS=60 -> 17 ms. */
 uint32_t g_frame_ms = 34;
@@ -154,12 +207,22 @@ void gt_quit_game(void) {
 
 int main(int argc, char **argv) {
     const char *xbe = argc > 1 ? argv[1] : "game/Default.xbe";
+#ifdef _WIN32
     if (argc <= 1 && GetFileAttributesA(xbe) == INVALID_FILE_ATTRIBUTES) {   /* installed: run from the exe's folder */
         char dir[MAX_PATH];
         DWORD n = GetModuleFileNameA(NULL, dir, MAX_PATH);
         while (n && dir[n - 1] != '\\') n--;
         if (n) { dir[n - 1] = 0; SetCurrentDirectoryA(dir); }
     }
+#else
+    if (argc <= 1 && GetFileAttributesA(xbe) == INVALID_FILE_ATTRIBUTES) {   /* installed: run from the exe's folder */
+        char dir[MAX_PATH];
+        ssize_t n = readlink("/proc/self/exe", dir, sizeof dir - 1);
+        while (n > 0 && dir[n - 1] != '/') n--;
+        if (n > 1) { dir[n - 1] = 0; if (chdir(dir)) {} }
+    }
+    linux_set_argv(argv);
+#endif
     load_settings();
     if (getenv("GT_FPS") && atoi(getenv("GT_FPS")) == 60) g_frame_ms = 17;
     if (getenv("GT_DRAWDIST")) {
@@ -167,6 +230,12 @@ int main(int argc, char **argv) {
         if (d >= 100 && d <= 400) g_cull_far = d / 100.0f;
     }
     CreateDirectoryA("out", NULL);
+#ifndef _WIN32
+    /* installed: gauntlet.sh sends stderr to out/gauntlet.log */
+    updater_start();
+    crash_handler_install();
+    g_missed = fopen("out/missed_targets.txt", "a");
+#else
     if (!GetConsoleWindow() && (GetStdHandle(STD_ERROR_HANDLE) == NULL ||
                                 GetStdHandle(STD_ERROR_HANDLE) == INVALID_HANDLE_VALUE))
         freopen("out\\gauntlet.log", "w", stderr);   /* installed build (windows subsystem): log to a file */
@@ -178,6 +247,7 @@ int main(int argc, char **argv) {
     DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &g_main_thread, 0, FALSE,
                     DUPLICATE_SAME_ACCESS);
     if (getenv("GT_WATCHDOG")) CreateThread(NULL, 0, watchdog, (void *)(uintptr_t)atoi(getenv("GT_WATCHDOG")), 0, NULL);
+#endif
     mem_init();
     kernel_init();
     uint32_t entry = xbe_load(xbe);

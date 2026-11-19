@@ -136,7 +136,7 @@ uint32_t kernel_wait(uint32_t *objects, int count, int wait_any, int64_t timeout
             }
         }
         if (has_timeout && sched_now_100ns() >= deadline) return STATUS_TIMEOUT;
-        sched_yield();
+        gt_sched_yield();
     }
 }
 
@@ -228,7 +228,7 @@ K(99, KeDelayExecutionThread) {
     /* (WaitMode, Alertable, *Interval) */
     int64_t t = (int64_t)RD64(ARG(2));
     uint64_t until = t < 0 ? sched_now_100ns() + (uint64_t)(-t) : (uint64_t)t;
-    if (t == 0) sched_yield();
+    if (t == 0) gt_sched_yield();
     else sched_sleep_until(until);
     return STATUS_SUCCESS;
 }
@@ -282,7 +282,7 @@ K(205, NtPulseEvent) {
     if (!ev) return STATUS_INVALID_HANDLE;
     if (ARG(1)) WR32(ARG(1), RD32(ev + 4));
     WR32(ev + 4, 1);
-    sched_yield(); /* let waiters see it */
+    gt_sched_yield(); /* let waiters see it */
     WR32(ev + 4, 0);
     return STATUS_SUCCESS;
 }
@@ -425,12 +425,16 @@ K(8, DbgPrint) {
 K(49, HalReturnToFirmware) {
     LOG("[kernel] HalReturnToFirmware(%u)\n", ARG(0));
     if (ARG(0) >= 1 && ARG(0) <= 3 && !getenv("GT_INPUT")) {
+#ifndef _WIN32
+        linux_relaunch();
+#else
         STARTUPINFOA si = {sizeof si};
         PROCESS_INFORMATION pi;
         if (CreateProcessA(NULL, GetCommandLineA(), NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
             CloseHandle(pi.hThread);
             CloseHandle(pi.hProcess);
         }
+#endif
     }
     ExitProcess(0);
 }
@@ -713,7 +717,7 @@ static void dpc_thread(X86Context *c) {
             guest_call(c, RD32(d + 12), 4, args);
             irql = old;
         }
-        sched_yield();
+        gt_sched_yield();
     }
 }
 

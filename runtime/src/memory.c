@@ -1,4 +1,9 @@
 /* Guest address space: 4 GB reserved; RAM mapped twice (0 and 0x80000000) from one section. */
+#ifndef _WIN32
+#include <errno.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 #include <windows.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -17,6 +22,7 @@ _Noreturn void rt_fatal(const char *fmt, ...) {
     ExitProcess(3);
 }
 
+#ifdef _WIN32
 static void commit_fixed(uint32_t va, uint32_t size) {
     if (!VirtualAlloc(g_mem + va, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE))
         rt_fatal("commit %08X+%X failed (%lu)", va, size, GetLastError());
@@ -43,6 +49,28 @@ void mem_init(void) {
     commit_fixed(KSENTINEL_BASE, 0x00100000);
     commit_fixed(HW_BASE, HW_SIZE);
 }
+#else
+static void commit_fixed(uint32_t va, uint32_t size) {
+    if (mmap(g_mem + va, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == MAP_FAILED)
+        rt_fatal("commit %08X+%X failed (%d)", va, size, errno);
+}
+
+/* 4 GB reserved (PROT_NONE); RAM is one memfd mapped at guest 0 and at RAM_ALIAS, like the Windows section view. */
+void mem_init(void) {
+    int fd = memfd_create("gauntlet-ram", MFD_CLOEXEC);
+    if (fd < 0 || ftruncate(fd, RAM_SIZE)) rt_fatal("memfd_create failed (%d)", errno);
+    uint8_t *base = mmap(NULL, 1ull << 32, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (base == MAP_FAILED) rt_fatal("cannot reserve 4 GB");
+    if (mmap(base, RAM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd, 0) == MAP_FAILED ||
+        mmap(base + RAM_ALIAS, RAM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd, 0) == MAP_FAILED)
+        rt_fatal("cannot map guest RAM (%d)", errno);
+    close(fd);
+    g_mem = base;
+    commit_fixed(KAREA_BASE, KAREA_SIZE);
+    commit_fixed(KSENTINEL_BASE, 0x00100000);
+    commit_fixed(HW_BASE, HW_SIZE);
+}
+#endif
 
 /* ---- guest heap: first-fit over [HEAP_BASE, HEAP_END), host-side block table ---- */
 typedef struct { uint32_t va, size; } Block;

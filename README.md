@@ -29,6 +29,8 @@ Windows, with a Direct3D 11 renderer, HD texture packs, widescreen, 60 fps, MSAA
   be lifted without speeding the game up.
 - **Anti-aliasing and filtering.** Up to 8x MSAA, FXAA and 16x anisotropic filtering.
 - **Post-processing.** Optional sharpening (good with HD textures) and a CRT scanline look.
+- **Softer hit flash.** Characters hit in combat get a translucent white tint instead of a solid white
+  silhouette (Soft by default; Full shows the original look, Off removes it).
 - **Borderless fullscreen.** Toggle with F11 or Alt+Enter.
 - **Up to 4 players** on XInput gamepads.
 - **Remappable controls.** Rebind keyboard keys and gamepad buttons in the launcher.

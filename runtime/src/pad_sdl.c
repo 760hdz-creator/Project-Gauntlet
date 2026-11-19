@@ -56,6 +56,7 @@ typedef struct SDL_VirtualJoystickDesc {
 } SDL_VirtualJoystickDesc;
 #else
 #include <SDL3/SDL.h>
+#include <unistd.h>
 #endif
 
 #define SDL_FUNCS(X)                                                                        \
@@ -383,8 +384,22 @@ int pad_sdl_init(void) {
     S.SetJoystickEventsEnabled(false);   /* nothing reads SDL's event queue on Windows; states are polled */
     S.SetGamepadEventsEnabled(false);
 #endif
-    int db = S.AddGamepadMappingsFromFile("gamecontrollerdb.txt");   /* the working directory is the exe's */
-    int own = S.AddGamepadMappingsFromFile("controllers.txt");
+    /* both files sit next to the exe (dev runs start in the repo root, not the exe's folder) */
+    char file[4096];
+#ifdef _WIN32
+    *slash = 0;
+    const char *dir = path;
+#else
+    char dir[4000];
+    ssize_t len = readlink("/proc/self/exe", dir, sizeof dir - 1);
+    while (len > 0 && dir[len - 1] != '/') len--;
+    dir[len > 1 ? len - 1 : 0] = 0;
+    if (!*dir) strcpy(dir, ".");
+#endif
+    snprintf(file, sizeof file, "%s/gamecontrollerdb.txt", dir);
+    int db = S.AddGamepadMappingsFromFile(file);
+    snprintf(file, sizeof file, "%s/controllers.txt", dir);
+    int own = S.AddGamepadMappingsFromFile(file);
     LOG("[input] SDL gamepads ready (%d mappings from gamecontrollerdb.txt%s)\n", db < 0 ? 0 : db,
         own > 0 ? ", plus controllers.txt" : "");
     state = 1;

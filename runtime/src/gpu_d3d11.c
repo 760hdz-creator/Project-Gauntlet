@@ -1139,6 +1139,15 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
     static int nodraw = -1;
     if (nodraw < 0) { const char *e = getenv("GT_NODRAW"); nodraw = e && *e && *e != '0'; }
     if (nodraw || !ready() || !ni) return;
+    {   /* GT_SKIPCOMB2=1 (debug): skip draws with 2+ combiner stages whose stage-1 palette is at GT_SKIPPAL (hex) */
+        static int sk = -1; static uint32_t skpal;
+        if (sk < 0) { const char *e = getenv("GT_SKIPPAL"); sk = e != NULL; skpal = e ? (uint32_t)strtoul(e, NULL, 16) : 0; }
+        if (sk && (KREG(K_COMB_CONTROL) & 0xFF) >= 2) {
+            uint32_t pw = KREG(K_TEX_PALETTE(1));
+            uint32_t pa = (nv2a_dma_base(KREG((pw & 1) ? K_DMA_B : K_DMA_A)) + (pw & ~0x3Fu)) & 0x03FFFFFF;
+            if (pa == skpal) return;
+        }
+    }
     if ((KREG(K_TRANSFORM_MODE) & 3) == 2) {
         static int warned;
         if (!warned++) LOG("[gpu] vertex programs not implemented; skipping draws\n");
@@ -1178,14 +1187,34 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
     {   /* GT_DRAWLOG=N: log every draw of frame N (state + first vertex) */
         static int dl = -1;
         if (dl < 0) { const char *e = getenv("GT_DRAWLOG"); dl = e ? atoi(e) : 0; }
-        if (dl && (int)frame_no == dl)
-            LOG("[draw] t%d nv %u ni %u v0 %.1f %.1f %.4f %.3f d %.2f %.2f %.2f %.2f uv %.3f %.3f | blend %X %X/%X ztest %X zf %X zm %X cmask %08X atest %X/%X/%X stencil %X prog %08X tex0 %08X fmt %08X comb %X c0 %08X cicw %08X cocw %08X\n",
-                topo, nv, ni, v[0].a[0][0], v[0].a[0][1], v[0].a[0][2], v[0].a[0][3], v[0].a[3][0], v[0].a[3][1],
+        static int dln = -1;
+        if (dln < 0) { const char *e = getenv("GT_DRAWLOGN"); dln = e && atoi(e) > 0 ? atoi(e) : 1; }   /* frames logged */
+        if (dl && (int)frame_no >= dl && (int)frame_no < dl + dln)
+            LOG("[draw] f%u t%d nv %u ni %u v0 %.1f %.1f %.4f %.3f d %.2f %.2f %.2f %.2f uv %.3f %.3f | blend %X %X/%X ztest %X zf %X zm %X cmask %08X atest %X/%X/%X stencil %X prog %08X tex0 %08X fmt %08X comb %X c0 %08X cicw %08X cocw %08X\n",
+                frame_no, topo, nv, ni, v[0].a[0][0], v[0].a[0][1], v[0].a[0][2], v[0].a[0][3], v[0].a[3][0], v[0].a[3][1],
                 v[0].a[3][2], v[0].a[3][3], v[0].a[9][0], v[0].a[9][1], KREG(K_BLEND_EN), KREG(K_BLEND_SFACTOR),
                 KREG(K_BLEND_DFACTOR), KREG(K_DEPTH_TEST_EN), KREG(K_DEPTH_FUNC), KREG(K_DEPTH_MASK), KREG(K_COLOR_MASK),
                 KREG(K_ALPHA_TEST_EN), KREG(K_ALPHA_FUNC), KREG(K_ALPHA_REF), KREG(K_STENCIL_TEST_EN),
                 KREG(K_SHADER_STAGE_PROG), KREG(K_TEX_OFFSET(0)), KREG(K_TEX_FORMAT(0)), KREG(K_COMB_CONTROL),
                 KREG(K_COMB_FACTOR0), KREG(K_COMB_COLOR_ICW), KREG(K_COMB_COLOR_OCW));
+        if (dl && (int)frame_no >= dl && (int)frame_no < dl + dln) {   /* every combiner stage, the final combiner and stage 1 texture */
+            for (int st = 0; st < (int)(KREG(K_COMB_CONTROL) & 0xFF) && st < 8; st++)
+                LOG("[draw] f%u   st%d f0 %08X f1 %08X cicw %08X cocw %08X aicw %08X aocw %08X\n", frame_no, st,
+                    KREG(K_COMB_FACTOR0 + st * 4), KREG(K_COMB_FACTOR1 + st * 4), KREG(K_COMB_COLOR_ICW + st * 4),
+                    KREG(K_COMB_COLOR_OCW + st * 4), KREG(K_COMB_ALPHA_ICW + st * 4), KREG(K_COMB_ALPHA_OCW + st * 4));
+            LOG("[draw] f%u   fcw0 %08X fcw1 %08X tex1 %08X fmt1 %08X spec %.2f %.2f %.2f %.2f\n", frame_no, KREG(K_COMB_SPECFOG_CW0),
+                KREG(K_COMB_SPECFOG_CW1), KREG(K_TEX_OFFSET(1)), KREG(K_TEX_FORMAT(1)), v[0].a[4][0], v[0].a[4][1],
+                v[0].a[4][2], v[0].a[4][3]);
+            LOG("[draw] f%u   texgen1 %X %X %X %X vfmt10 %08X uv1 %.3f %.3f %.3f %.3f texmat1 %X normal-fmt %08X\n",
+                frame_no, KREG(0x03D0), KREG(0x03D4), KREG(0x03D8), KREG(0x03DC), KREG(0x1760 + 10 * 4),
+                v[0].a[10][0], v[0].a[10][1], v[0].a[10][2], v[0].a[10][3], KREG(K_TEXMAT_EN + 4), KREG(0x1760 + 2 * 4));
+            for (int t = 0; t < 2; t++) {   /* palette of stages 0/1: first entries */
+                uint32_t pw = KREG(K_TEX_PALETTE(t));
+                uint32_t pa = (nv2a_dma_base(KREG((pw & 1) ? K_DMA_B : K_DMA_A)) + (pw & ~0x3Fu)) & 0x03FFFFFF;
+                LOG("[draw] f%u   pal%d %08X: %08X %08X %08X %08X %08X %08X\n", frame_no, t, pa, RD32(pa), RD32(pa + 4),
+                    RD32(pa + 8), RD32(pa + 12), RD32(pa + 64), RD32(pa + 128));
+            }
+        }
     }
 
     /* vertex constants */
@@ -1275,6 +1304,43 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
     ID3D11DeviceContext_PSSetShaderResources(ctx, 0, 4, srvs);
     ID3D11DeviceContext_PSSetSamplers(ctx, 0, 4, smps);
     ID3D11DeviceContext_DrawIndexed(ctx, ni, 0, 0);
+    {   /* GT_WHITEPROBE=N (debug, needs GT_MSAA=1): in frame N, log every draw that adds near-white pixels */
+        static int wp = -1; static uint32_t last_white, ndraw;
+        if (wp < 0) { const char *e = getenv("GT_WHITEPROBE"); wp = e ? atoi(e) : 0; }
+        if (wp && (int)frame_no == wp && !cur_rt->ms) {
+            D3D11_TEXTURE2D_DESC d;
+            ID3D11Texture2D_GetDesc(cur_rt->tex, &d);
+            d.Usage = D3D11_USAGE_STAGING; d.BindFlags = 0; d.CPUAccessFlags = D3D11_CPU_ACCESS_READ; d.MiscFlags = 0;
+            ID3D11Texture2D *st = NULL;
+            if (SUCCEEDED(ID3D11Device_CreateTexture2D(dev, &d, NULL, &st))) {
+                ID3D11DeviceContext_CopyResource(ctx, (ID3D11Resource *)st, (ID3D11Resource *)cur_rt->tex);
+                D3D11_MAPPED_SUBRESOURCE m;
+                uint32_t white = 0;
+                if (SUCCEEDED(ID3D11DeviceContext_Map(ctx, (ID3D11Resource *)st, 0, D3D11_MAP_READ, 0, &m))) {
+                    for (uint32_t y = 0; y < d.Height; y++) {
+                        const uint8_t *p = (const uint8_t *)m.pData + y * m.RowPitch;
+                        for (uint32_t x = 0; x < d.Width; x++, p += 4) white += p[0] > 245 && p[1] > 245 && p[2] > 245;
+                    }
+                    ID3D11DeviceContext_Unmap(ctx, (ID3D11Resource *)st, 0);
+                }
+                ID3D11Texture2D_Release(st);
+                if (white > last_white + 20) {
+                    uint32_t pw = KREG(K_TEX_PALETTE(1));
+                    uint32_t pa = (nv2a_dma_base(KREG((pw & 1) ? K_DMA_B : K_DMA_A)) + (pw & ~0x3Fu)) & 0x03FFFFFF;
+                    LOG("[white] draw %u +%u px: d %.2f %.2f %.2f %.2f s %.2f %.2f %.2f %.2f comb %X tex0 %08X tex1 %08X pal1 %08X "
+                        "st0 %08X/%08X st1 %08X/%08X a0 %08X a1 %08X fcw %08X/%08X blend %X %X/%X c0 %08X c1 %08X\n",
+                        ndraw, white - last_white, v[0].a[3][0], v[0].a[3][1], v[0].a[3][2], v[0].a[3][3], v[0].a[4][0],
+                        v[0].a[4][1], v[0].a[4][2], v[0].a[4][3], KREG(K_COMB_CONTROL), KREG(K_TEX_OFFSET(0)),
+                        KREG(K_TEX_OFFSET(1)), pa, KREG(K_COMB_COLOR_ICW), KREG(K_COMB_COLOR_OCW),
+                        KREG(K_COMB_COLOR_ICW + 4), KREG(K_COMB_COLOR_OCW + 4), KREG(K_COMB_ALPHA_ICW),
+                        KREG(K_COMB_ALPHA_ICW + 4), KREG(K_COMB_SPECFOG_CW0), KREG(K_COMB_SPECFOG_CW1), KREG(K_BLEND_EN),
+                        KREG(K_BLEND_SFACTOR), KREG(K_BLEND_DFACTOR), KREG(K_COMB_FACTOR0), KREG(K_COMB_FACTOR1));
+                }
+                last_white = white;
+            }
+            ndraw++;
+        }
+    }
 }
 
 /* ---------------- clear / flip ---------------- */
@@ -1438,7 +1504,9 @@ static void flip_impl(uint32_t addr) {
     if (shot_every < 0) { const char *e = getenv("GT_SHOT"); shot_every = e ? atoi(e) : 0; }
     static int shot_bb = -1;
     if (shot_bb < 0) { const char *e = getenv("GT_SHOTBB"); shot_bb = e && *e == '1'; }
-    if (s && shot_every > 0 && frame_no % shot_every == 0 && !shot_bb) screenshot(s);
+    static int shot_from = -1;
+    if (shot_from < 0) { const char *e = getenv("GT_SHOTFROM"); shot_from = e ? atoi(e) : 0; }   /* GT_SHOTFROM=N: no shots before frame N */
+    if (s && shot_every > 0 && frame_no % shot_every == 0 && (int)frame_no >= shot_from && !shot_bb) screenshot(s);
     if (s) {
         /* TV overscan: the game draws 2D (HUD, loading screens, cutscene bars) inside the title-safe viewport
          * x 32..611, y 16..463 and its clears cover only that rect, so the border keeps stale frames that a TV hides.

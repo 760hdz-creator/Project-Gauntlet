@@ -651,6 +651,32 @@ void x86_hle(X86Context *c, uint32_t va) {
                 }
             }
         }
+        {   /* Launcher cheats, applied to every living player (players 0xBB4F60, stride 0x6140, health float +0x3658).
+             * GT_GOLD=1: gold (+0x3668, the game caps it at 99999) kept at 99999.
+             * GT_MAXLEVEL=1: level (+0x6108) set to 99 with its experience (+0x3664, threshold as ModifyExp 67A30:
+             * level n needs n*0x11F8 - 0x1B0D0 above level 60), then PlayerUpdateAtts (61F20) recomputes the stats. */
+            static int gold = -1, maxlv = -1;
+            if (gold < 0) { const char *e = getenv("GT_GOLD"); gold = e && *e == '1'; }
+            if (maxlv < 0) { const char *e = getenv("GT_MAXLEVEL"); maxlv = e && *e == '1'; }
+            if (gold || maxlv)
+                for (int i = 0; i < 4; i++) {
+                    uint32_t p = 0xBB4F60u + (uint32_t)i * 0x6140u;
+                    uint32_t hb = RD32(p + 0x3658); float hp; memcpy(&hp, &hb, 4);
+                    if (!(hp > 0.0f) || !RD32(p + 0xE8)) continue;   /* +0xE8: 0 while the slot has not joined */
+                    if (gold && RD32(p + 0x3668) != 99999) WR32(p + 0x3668, 99999);
+                    int lv = (int32_t)RD32(p + 0x6108);
+                    if (maxlv && lv >= 1 && lv < 99) {
+                        WR32(p + 0x6108, 99);
+                        uint32_t need = 99 * 0x11F8 - 0x1B0D0;
+                        if (RD32(p + 0x3664) < need) WR32(p + 0x3664, need);
+                        uint32_t args[3] = {p, RD32(p + 0xC), 0};
+                        X86Context sub = *c;
+                        sub.esp = c->esp - 256;
+                        guest_call(&sub, 0x61F20, 3, args);
+                        LOG("[cheat] player %d level %d -> 99\n", i, lv);
+                    }
+                }
+        }
         ret_std(c, 2, 0);
         return;
     }

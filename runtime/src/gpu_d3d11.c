@@ -72,8 +72,9 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     return DefWindowProcW(h, m, w, l);
 }
 
-/* Window placement: GT_MONITOR=N picks monitor N (enumeration order); default = the first non-primary
- * monitor, so test runs stay off the primary desktop. The window opens without taking focus. */
+/* Window placement: GT_MONITOR=N picks monitor N (EnumDisplayMonitors order, as the launcher lists them).
+ * Default: the installed game (no console) opens on the primary monitor and takes focus; console/test runs open
+ * on the first non-primary monitor without taking focus, so they stay off the primary desktop. */
 typedef struct { int want, idx; RECT pick; int found; } MonPick;
 static BOOL CALLBACK mon_enum(HMONITOR m, HDC dc, LPRECT rc, LPARAM lp) {
     MonPick *mp = (MonPick *)lp;
@@ -86,6 +87,15 @@ static BOOL CALLBACK mon_enum(HMONITOR m, HDC dc, LPRECT rc, LPARAM lp) {
     return TRUE;
 }
 
+typedef struct { HMONITOR pm; int i, found; } PrimFindT;
+static BOOL CALLBACK prim_enum(HMONITOR m, HDC dc, LPRECT rc, LPARAM lp) {
+    PrimFindT *pf = (PrimFindT *)lp;
+    (void)dc; (void)rc;
+    if (m == pf->pm && pf->found < 0) pf->found = pf->i;
+    pf->i++;
+    return TRUE;
+}
+
 static DWORD WINAPI window_thread(LPVOID ev) {
     WNDCLASSW wc = {0};
     wc.lpfnWndProc = wndproc;
@@ -95,7 +105,13 @@ static DWORD WINAPI window_thread(LPVOID ev) {
     wc.lpszClassName = L"GauntletRecomp";
     RegisterClassW(&wc);
     const char *me = getenv("GT_MONITOR");
-    MonPick mp = {me ? atoi(me) : -1, 0, {0}, 0};
+    int dev_run = GetConsoleWindow() != NULL;
+    MonPick mp = {me && *me ? atoi(me) : -1, 0, {0}, 0};
+    if (mp.want < 0 && !dev_run) {   /* installed: primary monitor */
+        PrimFindT pf = {MonitorFromPoint((POINT){0, 0}, MONITOR_DEFAULTTOPRIMARY), 0, -1};
+        EnumDisplayMonitors(NULL, NULL, prim_enum, (LPARAM)&pf);
+        mp.want = pf.found >= 0 ? pf.found : 0;
+    }
     EnumDisplayMonitors(NULL, NULL, mon_enum, (LPARAM)&mp);
     /* window: 2/3 of the monitor height, monitor aspect (4:3 with GT_WIDESCREEN=0) */
     int wh = 960, ww = 1280;
@@ -115,7 +131,8 @@ static DWORD WINAPI window_thread(LPVOID ev) {
     if (mp.found) { x = mp.pick.left + 32; y = mp.pick.top + 32; }
     g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Gauntlet Dark Legacy (recomp)", WS_OVERLAPPEDWINDOW,
                              x, y, r.right - r.left, r.bottom - r.top, NULL, NULL, wc.hInstance, NULL);
-    ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
+    if (dev_run) ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
+    else { ShowWindow(g_hwnd, SW_SHOW); SetForegroundWindow(g_hwnd); }
     if (getenv("GT_FULLSCREEN") && *getenv("GT_FULLSCREEN") == '1') toggle_fullscreen(g_hwnd);
     SetEvent((HANDLE)ev);
     MSG msg;

@@ -44,7 +44,7 @@ static const wchar_t kShortcut[] = L"Project Gauntlet.lnk";
 enum { ID_ISO_EDIT = 200, ID_ISO_BROWSE, ID_DIR_EDIT, ID_DIR_BROWSE, ID_DESKTOP, ID_STARTMENU, ID_INSTALL, ID_PROGRESS,
        ID_STATUS, ID_HD_EDIT, ID_HD_BROWSE, ID_HD_USE, ID_HD_STATUS, ID_PLAY, ID_UPDATE, ID_UNINSTALL, ID_FULLSCREEN,
        ID_WIDESCREEN, ID_SCALE, ID_MSAA, ID_ANISO, ID_PADS, ID_SHARPEN, ID_FXAA, ID_CRT, ID_CONTROLS, ID_CTL_BACK,
-       ID_CTL_DEFAULTS, ID_FPS60, ID_HITFLASH, ID_KEY0 = 2000, ID_PADM0 = 2100 };
+       ID_CTL_DEFAULTS, ID_FPS60, ID_HITFLASH, ID_LOGS, ID_CHEATS, ID_CH_BACK, ID_MONITOR, ID_CH0 = 1900, ID_KEY0 = 2000, ID_PADM0 = 2100 };
 #define WM_APP_STATUS (WM_APP + 1)
 #define WM_APP_PROGRESS (WM_APP + 2)
 #define WM_APP_DONE (WM_APP + 3)
@@ -490,11 +490,44 @@ static const Choice kAniso[] = {{L"Trilinear", L"1"}, {L"2x anisotropic", L"2"},
 static const Choice kPads[] = {{L"1 (default)", nullptr}, {L"2", L"2"}, {L"3", L"3"}, {L"4", L"4"}};
 static const Choice kHitFlash[] = {{L"Soft (default)", nullptr}, {L"Full (original)", L"100"}, {L"Off", L"0"}};
 static const Choice kSharpen[] = {{L"Off (default)", nullptr}, {L"Low", L"30"}, {L"Medium", L"60"}, {L"High", L"100"}};
+// Monitors in EnumDisplayMonitors order (the game's GT_MONITOR uses the same order); filled by InitMonitors.
+static Choice kMonitor[10] = {{L"Main monitor (default)", nullptr}};
+static std::wstring g_monLabels[9];
+static const wchar_t* kMonValues[9] = {L"0", L"1", L"2", L"3", L"4", L"5", L"6", L"7", L"8"};
+static int g_nMonitors = 1;
+static BOOL CALLBACK MonEnum(HMONITOR m, HDC, LPRECT, LPARAM) {
+    int i = g_nMonitors - 1;
+    if (i >= 9) return FALSE;
+    MONITORINFO mi = {sizeof mi};
+    GetMonitorInfoW(m, &mi);
+    g_monLabels[i] = L"Monitor " + std::to_wstring(i + 1) + L": " + std::to_wstring(mi.rcMonitor.right - mi.rcMonitor.left) +
+                     L" x " + std::to_wstring(mi.rcMonitor.bottom - mi.rcMonitor.top) +
+                     ((mi.dwFlags & MONITORINFOF_PRIMARY) ? L" (main)" : L"");
+    kMonitor[g_nMonitors] = {g_monLabels[i].c_str(), kMonValues[i]};
+    g_nMonitors++;
+    return TRUE;
+}
 struct ComboSetting { int id; const wchar_t* key; const Choice* c; int n; };
-static const ComboSetting kCombos[] = {{ID_SCALE, L"GT_SCALE", kScale, 6}, {ID_MSAA, L"GT_MSAA", kMsaa, 4},
+static ComboSetting kCombos[] = {{ID_SCALE, L"GT_SCALE", kScale, 6}, {ID_MSAA, L"GT_MSAA", kMsaa, 4},
                                        {ID_ANISO, L"GT_ANISO", kAniso, 5}, {ID_PADS, L"GT_PADS", kPads, 4},
                                        {ID_SHARPEN, L"GT_SHARPEN", kSharpen, 4},
-                                       {ID_HITFLASH, L"GT_HITFLASH", kHitFlash, 3}};
+                                       {ID_HITFLASH, L"GT_HITFLASH", kHitFlash, 3},
+                                       {ID_MONITOR, L"GT_MONITOR", kMonitor, 1}};
+static void InitMonitors() {
+    EnumDisplayMonitors(nullptr, nullptr, MonEnum, 0);
+    for (auto& cs : kCombos) if (cs.id == ID_MONITOR) cs.n = g_nMonitors;
+}
+
+// Cheats (settings.ini GT_* read by the game's hle.c). Each toggle sets its keys to the values, or removes them.
+struct Cheat { const wchar_t* label; const wchar_t* key1; const wchar_t* val1; const wchar_t* key2; const wchar_t* val2; };
+static const Cheat kCheats[] = {
+    {L"God mode (health always full)", L"GT_GOD", L"1", nullptr, nullptr},
+    {L"Max level (99)", L"GT_MAXLEVEL", L"1", nullptr, nullptr},
+    {L"Max gold (99,999)", L"GT_GOLD", L"1", nullptr, nullptr},
+    {L"Open all Tower gates (all crystals)", L"GT_CRYSTALS", L"1", nullptr, nullptr},
+    {L"All shards and runes (unlocks the final worlds)", L"GT_SHARDS", L"7FE", L"GT_RUNES", L"FFFF"},
+};
+static const int kNumCheats = sizeof kCheats / sizeof kCheats[0];
 
 static void UpdateHdStatus() {
     if (!g_hdStatus) return;
@@ -520,6 +553,7 @@ static void LoadSettings() {
     SetOn(ID_FXAA, IniGet(g_instDir, L"settings", L"GT_FXAA") == L"1");
     SetOn(ID_CRT, IniGet(g_instDir, L"settings", L"GT_CRT") == L"1");
     SetOn(ID_FPS60, IniGet(g_instDir, L"settings", L"GT_FPS") == L"60");
+    for (int i = 0; i < kNumCheats; i++) SetOn(ID_CH0 + i, !IniGet(g_instDir, L"settings", kCheats[i].key1).empty());
     std::wstring tex = IniGet(g_instDir, L"settings", L"GT_HDTEX"), folder = IniGet(g_instDir, L"launcher", L"HdFolder");
     if (folder.empty() && tex != L"0") folder = tex;
     SetOn(ID_HD_USE, tex != L"0");
@@ -536,6 +570,11 @@ static void SaveSettings() {
     IniSet(g_instDir, L"settings", L"GT_FXAA", IsOn(ID_FXAA) ? L"1" : L"");
     IniSet(g_instDir, L"settings", L"GT_CRT", IsOn(ID_CRT) ? L"1" : L"");
     IniSet(g_instDir, L"settings", L"GT_FPS", IsOn(ID_FPS60) ? L"60" : L"");
+    for (int i = 0; i < kNumCheats; i++) {
+        bool on = IsOn(ID_CH0 + i);
+        IniSet(g_instDir, L"settings", kCheats[i].key1, on ? kCheats[i].val1 : L"");
+        if (kCheats[i].key2) IniSet(g_instDir, L"settings", kCheats[i].key2, on ? kCheats[i].val2 : L"");
+    }
     std::wstring folder = GetText(g_hd);
     IniSet(g_instDir, L"launcher", L"HdFolder", folder);
     IniSet(g_instDir, L"settings", L"GT_HDTEX", !IsOn(ID_HD_USE) ? L"0" : folder);
@@ -610,7 +649,7 @@ static const PadSrc kSrc[] = {{L"D-pad up", 0}, {L"D-pad down", 1}, {L"D-pad lef
                               {L"RT", 17}, {L"(none)", 18}};
 static const int kNumSrc = sizeof kSrc / sizeof kSrc[0];
 static int g_keys[18], g_padm[14], g_capture = -1, g_page;
-static std::vector<HWND> g_pageCtl[2];
+static std::vector<HWND> g_pageCtl[3];   // 0 main, 1 controls, 2 cheats
 static std::vector<bool> g_mainVis;
 
 static std::wstring KeyName(int vk) {
@@ -675,18 +714,20 @@ static void CaptureKey(int vk) {
 static void RebuildArt();
 static void ShowPage(int page) {
     if (page == g_page) return;
-    if (page == 1) {
+    if (g_page == 0) {   // remember which main controls were visible (Update shows only when there is one)
         g_mainVis.clear();
         for (HWND c : g_pageCtl[0]) { g_mainVis.push_back(IsWindowVisible(c) != 0); ShowWindow(c, SW_HIDE); }
-        for (HWND c : g_pageCtl[1]) ShowWindow(c, SW_SHOW);
     } else {
-        for (HWND c : g_pageCtl[1]) ShowWindow(c, SW_HIDE);
-        for (size_t i = 0; i < g_pageCtl[0].size(); i++) ShowWindow(g_pageCtl[0][i], g_mainVis[i] ? SW_SHOW : SW_HIDE);
+        for (HWND c : g_pageCtl[g_page]) ShowWindow(c, SW_HIDE);
     }
+    if (page == 0)
+        for (size_t i = 0; i < g_pageCtl[0].size(); i++) ShowWindow(g_pageCtl[0][i], g_mainVis[i] ? SW_SHOW : SW_HIDE);
+    else
+        for (HWND c : g_pageCtl[page]) ShowWindow(c, SW_SHOW);
     g_page = page;
     g_capture = -1;
     RebuildArt();
-    SetFocus(GetDlgItem(g_wnd, page ? ID_CTL_BACK : ID_PLAY));
+    SetFocus(GetDlgItem(g_wnd, page == 1 ? ID_CTL_BACK : page == 2 ? ID_CH_BACK : ID_PLAY));
 }
 
 // The art with the darkened panel painted in (kept in g_artDC; WM_PAINT copies it).
@@ -720,6 +761,11 @@ static void BuildArt(int w, int h) {
         TextOutW(g_artDC, S(x), S(y), s.c_str(), (int)s.size());
     };
     int x = kPanel.left + 30, t = kPanel.top;
+    if (g_launcher && g_page == 2) {
+        text(x, t + 24, g_titleFont, kAccent, L"Cheats");
+        text(x, t + 84, g_smallFont, kDim, L"Applied when the game starts. They change your save, so turn them off to play fair.");
+        return;
+    }
     if (g_launcher && g_page == 1) {
         text(x, t + 24, g_titleFont, kAccent, L"Controls");
         text(x, t + 84, g_smallFont, kDim, L"Click a key, then press the new one (Esc cancels). Saved at once.");
@@ -742,13 +788,14 @@ static void BuildArt(int w, int h) {
             DrawTextW(g_artDC, v.data(), (int)v.size(), &r, DT_SINGLELINE | DT_PATH_ELLIPSIS | DT_NOPREFIX);
         }
         text(x, t + 262, g_font, kAccent, L"Display");
-        text(x, t + 378, g_font, kText, L"Resolution");
-        text(x, t + 418, g_font, kText, L"Anti-aliasing");
-        text(x, t + 458, g_font, kText, L"Texture filtering");
-        text(x, t + 498, g_font, kText, L"Sharpening");
-        text(x, t + 538, g_font, kText, L"Hit flash");
-        text(x, t + 578, g_font, kText, L"Players (gamepads)");
-        text(x, t + 622, g_font, kAccent, L"HD textures");
+        text(x, t + 374, g_font, kText, L"Monitor");
+        text(x, t + 412, g_font, kText, L"Resolution");
+        text(x, t + 450, g_font, kText, L"Anti-aliasing");
+        text(x, t + 488, g_font, kText, L"Texture filtering");
+        text(x, t + 526, g_font, kText, L"Sharpening");
+        text(x, t + 564, g_font, kText, L"Hit flash");
+        text(x, t + 602, g_font, kText, L"Players (gamepads)");
+        text(x, t + 642, g_font, kAccent, L"HD textures");
         return;
     }
     text(x, t + 24, g_titleFont, kAccent, g_updating ? L"Update Project Gauntlet" : L"Install Project Gauntlet");
@@ -898,7 +945,14 @@ static bool LauncherCommand(HWND h, int id, int code) {
     }
     switch (id) {
     case ID_CONTROLS: ShowPage(1); return true;
-    case ID_CTL_BACK: ShowPage(0); return true;
+    case ID_CTL_BACK: case ID_CH_BACK: ShowPage(0); return true;
+    case ID_CHEATS: ShowPage(2); return true;
+    case ID_LOGS: {   // the game log (out\gauntlet.log), selected in Explorer; the folder if there is no log yet
+        std::wstring log = g_instDir + L"\\out\\gauntlet.log";
+        if (Exists(log)) ShellExecuteW(h, nullptr, L"explorer.exe", (L"/select,\"" + log + L"\"").c_str(), nullptr, SW_SHOWNORMAL);
+        else ShellExecuteW(h, L"open", g_instDir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        return true;
+    }
     case ID_CTL_DEFAULTS:
         std::copy(kKeyDef, kKeyDef + 18, g_keys);
         std::copy(kPadDef, kPadDef + 14, g_padm);
@@ -925,9 +979,10 @@ static bool LauncherCommand(HWND h, int id, int code) {
         if (code == EN_KILLFOCUS) { UpdateHdStatus(); SaveSettings(); }
         return true;
     case ID_FULLSCREEN: case ID_WIDESCREEN: case ID_HD_USE: case ID_FXAA: case ID_CRT: case ID_FPS60:
+    case ID_CH0: case ID_CH0 + 1: case ID_CH0 + 2: case ID_CH0 + 3: case ID_CH0 + 4:
         if (code == BN_CLICKED) SaveSettings();
         return true;
-    case ID_SCALE: case ID_MSAA: case ID_ANISO: case ID_PADS: case ID_SHARPEN: case ID_HITFLASH:
+    case ID_SCALE: case ID_MSAA: case ID_ANISO: case ID_PADS: case ID_SHARPEN: case ID_HITFLASH: case ID_MONITOR:
         if (code == CBN_SELCHANGE) SaveSettings();
         return true;
     }
@@ -1046,6 +1101,7 @@ static void MakeCombo(int id, const Choice* c, int n, int x, int y, int w, HFONT
 }
 
 static void CreateLauncherControls() {
+    InitMonitors();
     int x = kPanel.left + 30, t = kPanel.top, fw = kPanel.right - kPanel.left - 60, cx = x + 260, cw = fw - 260;
     HWND play = Make(L"BUTTON", L"Play", BS_DEFPUSHBUTTON | WS_TABSTOP, ID_PLAY, x, t + 130, 240, 64, g_titleFont);
     g_updBtn = Make(L"BUTTON", L"Update", BS_PUSHBUTTON | WS_TABSTOP, ID_UPDATE, x + 260, t + 130, 200, 64);
@@ -1056,18 +1112,21 @@ static void CreateLauncherControls() {
     MakeCheck(L"FXAA (smooths edges)", ID_FXAA, x, t + 334, 300);
     MakeCheck(L"CRT scanlines", ID_CRT, x + 320, t + 334, 300);
     MakeCheck(L"60 fps (beta)", ID_FPS60, x + 490, t + 296, 190);
-    MakeCombo(ID_SCALE, kScale, 6, cx, t + 372, cw);
-    MakeCombo(ID_MSAA, kMsaa, 4, cx, t + 412, cw);
-    MakeCombo(ID_ANISO, kAniso, 5, cx, t + 452, cw);
-    MakeCombo(ID_SHARPEN, kSharpen, 4, cx, t + 492, cw);
-    MakeCombo(ID_HITFLASH, kHitFlash, 3, cx, t + 532, cw);
-    MakeCombo(ID_PADS, kPads, 4, cx, t + 572, cw);
-    g_hdUse = MakeCheck(L"Use the HD texture pack", ID_HD_USE, x, t + 656, 400);
-    g_hd = Make(L"EDIT", L"", ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP, ID_HD_EDIT, x, t + 694, fw - 130, 38);
-    Make(L"BUTTON", L"Browse...", BS_PUSHBUTTON | WS_TABSTOP, ID_HD_BROWSE, x + fw - 120, t + 694, 120, 38);
-    g_hdStatus = Make(L"STATIC", L"", SS_LEFT, ID_HD_STATUS, x, t + 738, fw - 190, 56, g_smallFont);
-    Make(L"BUTTON", L"Uninstall", BS_PUSHBUTTON | WS_TABSTOP, ID_UNINSTALL, x + fw - 170, t + 740, 170, 40, g_smallFont);
-    Make(L"BUTTON", L"Controls", BS_PUSHBUTTON | WS_TABSTOP, ID_CONTROLS, x + fw - 200, t + 130, 200, 64);
+    MakeCombo(ID_MONITOR, kMonitor, g_nMonitors, cx, t + 368, cw);
+    MakeCombo(ID_SCALE, kScale, 6, cx, t + 406, cw);
+    MakeCombo(ID_MSAA, kMsaa, 4, cx, t + 444, cw);
+    MakeCombo(ID_ANISO, kAniso, 5, cx, t + 482, cw);
+    MakeCombo(ID_SHARPEN, kSharpen, 4, cx, t + 520, cw);
+    MakeCombo(ID_HITFLASH, kHitFlash, 3, cx, t + 558, cw);
+    MakeCombo(ID_PADS, kPads, 4, cx, t + 596, cw);
+    g_hdUse = MakeCheck(L"Use the HD texture pack", ID_HD_USE, x, t + 672, 400);
+    g_hd = Make(L"EDIT", L"", ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP, ID_HD_EDIT, x, t + 708, fw - 130, 36);
+    Make(L"BUTTON", L"Browse...", BS_PUSHBUTTON | WS_TABSTOP, ID_HD_BROWSE, x + fw - 120, t + 708, 120, 36);
+    g_hdStatus = Make(L"STATIC", L"", SS_LEFT, ID_HD_STATUS, x, t + 750, fw - 370, 46, g_smallFont);
+    Make(L"BUTTON", L"Logs", BS_PUSHBUTTON | WS_TABSTOP, ID_LOGS, x + fw - 350, t + 752, 170, 38, g_smallFont);
+    Make(L"BUTTON", L"Uninstall", BS_PUSHBUTTON | WS_TABSTOP, ID_UNINSTALL, x + fw - 170, t + 752, 170, 38, g_smallFont);
+    Make(L"BUTTON", L"Controls", BS_PUSHBUTTON | WS_TABSTOP, ID_CONTROLS, x + fw - 200, t + 130, 200, 30, g_smallFont);
+    Make(L"BUTTON", L"Cheats", BS_PUSHBUTTON | WS_TABSTOP, ID_CHEATS, x + fw - 200, t + 164, 200, 30, g_smallFont);
     LoadSettings();
     // controls page, hidden until Controls is clicked
     auto children = [] {
@@ -1088,6 +1147,16 @@ static void CreateLauncherControls() {
             g_pageCtl[1].push_back(c);
             ShowWindow(c, SW_HIDE);
         }
+    // cheats page
+    for (int i = 0; i < kNumCheats; i++) MakeCheck(kCheats[i].label, ID_CH0 + i, x, t + 150 + i * 50, fw);
+    Make(L"BUTTON", L"Back", BS_PUSHBUTTON | WS_TABSTOP, ID_CH_BACK, x + fw - 170, t + 745, 170, 40, g_smallFont);
+    for (HWND c : children())
+        if (std::find(g_pageCtl[0].begin(), g_pageCtl[0].end(), c) == g_pageCtl[0].end() &&
+            std::find(g_pageCtl[1].begin(), g_pageCtl[1].end(), c) == g_pageCtl[1].end()) {
+            g_pageCtl[2].push_back(c);
+            ShowWindow(c, SW_HIDE);
+        }
+    for (int i = 0; i < kNumCheats; i++) SetOn(ID_CH0 + i, !IniGet(g_instDir, L"settings", kCheats[i].key1).empty());
     LoadMaps();
     RefreshMaps();
     SetFocus(play);

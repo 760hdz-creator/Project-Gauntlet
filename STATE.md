@@ -385,8 +385,16 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
     Neither is a confirmed bug without a hardware reference.
   - Installed 0.2.0 over C:\Games\Project Gauntlet with --update (55 s); installed game at 58.7 fps with the pack.
 
+- 2026-11-18 TESTS (0.2.0): fresh install with --hd into an empty folder (65 s, GT_HDTEX + HdFolder written);
+  launcher Play starts the game with the pack; launcher Uninstall removes kit, registry, shortcuts and itself, keeps
+  out\. Fixed: Uninstall removed the shared shortcuts/registry even for a folder that is not the registered install.
+  60 fps boss routes (make_route 1:6, 9:5:30, B:5 without the last two title taps): dragon A5, yeti I5, Plague Fiend
+  K5 dead, shard speech, back to the Tower, 56-59 fps with 3 instances, 0 fatal / gpu warnings / missed targets.
+  At 60 fps level loads finish ~2 s sooner (loader is per frame): routes with fixed title taps catch the hub early.
+
 ## Next
-0. Hand-test the launcher (Play, Update download, Uninstall, Browse) and 60 fps in more levels / bosses.
+0. Not tested: launcher Update download (needs a published release), HD Browse dialog, live key remap
+   (GT_KEYS parse verified, not real key presses).
 1. Test the other characters (routes only use the default hero), GARM movie (level id 0x2B) and the
    legend item movies. Check the white-player frames in A1. Watch for crashes, missed targets and the
    one-time gpu warnings (fog: gpu_d3d11.c "fog not implemented"; lighting). Unresolved, low priority: walking onto

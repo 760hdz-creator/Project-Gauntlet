@@ -30,8 +30,7 @@ HWND linux_create_window(void) {
     SDL_DisplayID *ids = SDL_GetDisplays(&n);
     SDL_DisplayID prim = SDL_GetPrimaryDisplay(), pick = prim;
     int installed = getenv("GT_INSTALLED") && *getenv("GT_INSTALLED") == '1';
-    LOG("[gpu] %d display(s)
-", n);
+    LOG("[gpu] %d display(s)\n", n);
     const char *me = getenv("GT_MONITOR");
     if (me && *me && ids && atoi(me) >= 0 && atoi(me) < n) pick = ids[atoi(me)];
     else if (!installed && ids)

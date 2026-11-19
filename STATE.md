@@ -392,12 +392,53 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   K5 dead, shard speech, back to the Tower, 56-59 fps with 3 instances, 0 fatal / gpu warnings / missed targets.
   At 60 fps level loads finish ~2 s sooner (loader is per frame): routes with fixed title taps catch the hub early.
 
+- 2026-11-18/19 USER PLAYTEST FIXES (all in the user's install C:\Games\Project Gauntlet; code pushed to both
+  remotes; 0.2.0 NOT released yet, see Next 0).
+  - Update path tested end to end with a local server: GT_UPDATE_API=<url> (test override; plain http allowed only
+    while it is set). A 0.1.9 launcher found 0.2.0, downloaded, ran --update --dir, closed; rebuilt in 45 s. Tag "v"
+    prefix stripped in the launcher text. Live key remap tested with injected keys (I remapped to Move up walks; W
+    unbound does nothing). All 8 heroes at 60 fps through A1 + A6 (title events shifted -1.8 s: out/input_c60s_*.txt).
+  - Hit flash: on a hit the game overlays the model with stage 1 = solid 8x8 texture (BDE6BD) * full-white diffuse
+    x2 -> flat white, 2 frames per hit, 20-39 frames on knockback/death (GT_FLASHLOG). GT_HITFLASH=0..100 scales that
+    overlay's alpha (default 35, launcher Soft/Full/Off), only for stage-1 textures <= 8x8 (dissolve/spawn effects
+    use the same combiner with 16x16 noise and are left alone). Shader: o.a *= at.w after the alpha test.
+  - 60 fps skin FX: ProcessSkinFX (7A9E0) stepped effects by [BEB238] >> 1 (vsyncs as 30 Hz ticks) = 0 at 60 fps, so
+    flash/dissolve/spawn effects stalled and dying enemies replayed their death ("phantom death x3"), and the
+    materialize effect showed as white noise at character select / Tower arrival. SOURCE_PATCHES feeds the 30 Hz
+    ticks crossed this frame from [13439C] (frame vsync count). Only site of `>> 1` on BEB238 (106 reads scanned).
+  - HD loader: 2..8 threads (half the CPUs), per-thread WIC factory (__declspec(thread)), semaphore queue; ~3.7 ms
+    per PNG. GT_HDLAT=1 logs swap-in latency: 558/600 within 2 frames.
+  - Widescreen culling: MBWorldSphereClip (94A80) used the 4:3 side planes (camera +0x60/+0x64); SOURCE_PATCHES
+    scale x by g_cull_x = 1/g_wide (set in gpu_d3d11.c device init). A1 21:9: 1501 draws/frame instead of 1240.
+    Far distance camera +0x5C * g_cull_far (GT_DRAWDIST=150/200/300, launcher Draw distance); DepthClipEnable off
+    when > 1. No visible change in the top-down levels tested.
+  - Quit Game: DoOptions (602A0) sets [BCDC40] = 1 on "Quit Game?" Yes (Tower Menu: Settings, Manage Character,
+    Shop, Inventory, Quit Game); SOURCE_PATCHES call gt_quit_game() (main.c) = ExitProcess unless GT_QUIT=title.
+    [BCDC00] = Quit Level. Tested: exits at once.
+  - Cheats (hle.c, XInputGetState): GT_GOLD=1 (gold +0x3668 = 99999), GT_MAXLEVEL=1 (level +0x6108 = 99, exp +0x3664 =
+    99*0x11F8-0x1B0D0, guest_call PlayerUpdateAtts 61F20), only joined players (+0xE8 != 0). Existing GT_GOD,
+    GT_CRYSTALS, GT_SHARDS=7FE + GT_RUNES=FFFF. ModifyExp 67A30, AddExp 67B60, PlayerGiveGold 679A0.
+  - Launcher: Cheats page (5 toggles), Logs button (Explorer /select out\gauntlet.log), Monitor (EnumDisplayMonitors
+    order = GT_MONITOR), Draw distance, Hit flash, 60 fps toggle, Controls page, sharpen/FXAA/CRT. Uninstall only
+    removes shortcuts/registry when they point at its folder.
+  - Runtime: installed game (no console) opens on the primary monitor and takes focus; console/test runs keep the
+    non-primary no-focus placement. Fog/lighting are never enabled by the game (78 logs). "Press START" in HUD panels
+    and wizard subtitles: not drawn by the Xbox code (no text call; strings only used by attract/title/select).
+  - Debug aids: GT_DRAWLOG=N + GT_DRAWLOGN=count (frame numbers, all combiner stages, palettes, texgen), GT_SHOTFROM,
+    GT_SHOTBB, GT_WHITEPROBE=frame (draws adding white pixels, needs GT_MSAA=1), GT_SKIPPAL, GT_FLASHLOG (+GT_FLASHTEX1),
+    GT_TICKLOG, GT_POSLOG, GT_VBLANKHZ, GT_HDLAT. Scratch tools (session scratchpad): xstr.py (disasm with strings,
+    find/xref), drive.ps1 (launcher BM_CLICK/WM_KEYDOWN + PrintWindow shots), dlg.ps1, key.ps1 (SendInput to a pid).
+  - Test-run gotchas: taskkill by PID only (by image name kills the background runs); a test install rewrites the
+    shared registry key + shortcuts (back up HKCU\Software\ProjectGauntlet, ...\Uninstall\ProjectGauntlet and both
+    .lnk, restore after); Desktop is C:\Users\<user>\OneDrive\Desktop.
+
 ## Next
-0. Not tested: launcher Update download (needs a published release), HD Browse dialog, live key remap
-   (GT_KEYS parse verified, not real key presses).
-1. Test the other characters (routes only use the default hero), GARM movie (level id 0x2B) and the
-   legend item movies. Check the white-player frames in A1. Watch for crashes, missed targets and the
-   one-time gpu warnings (fog: gpu_d3d11.c "fog not implemented"; lighting). Unresolved, low priority: walking onto
-   pad III did not fire (dist 4.9-5.8); the targeted cheat bypasses it. Level timing drifts: use anchors.
-2. Fog (02A4/029C/09C0) and fixed-function lighting, when a level hits the one-time warnings.
+0. User is playtesting. When they say it is good: move tag v0.2.0 to HEAD (force-push the tag to both remotes; ask
+   first), rebuild dist\ProjectGauntlet-Setup-0.2.0.exe, publish on the forge (tea, notes in the session's
+   notes020.md; regenerate) and GitLab (glab release create; the auto-mode classifier blocked it once: needs the
+   user's approval), then check the installed launcher sees it.
+1. Open: loading splash at 21:9 shows stale side areas; HD misses 52/636 (pack lacks Xbox-only art); not tested on a
+   clean PC (no Windows Sandbox); white noise on "Load game" from the title not re-checked after the skin FX fix.
+2. Test GARM movie (level id 0x2B) and the legend item movies. Unresolved, low priority: walking onto pad III did not
+   fire (dist 4.9-5.8); the targeted cheat bypasses it. Level timing drifts: use anchors.
 3. Oracle on non-leaf functions: 1563 pass; the remaining fails are unicorn NaN/fyl2x artifacts.

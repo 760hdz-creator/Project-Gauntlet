@@ -204,7 +204,7 @@ static void read_pad(SDL_Gamepad *g, HostState *s) {
     s->Gamepad.sThumbRY = axis(g, SDL_GAMEPAD_AXIS_RIGHTY, 1);
 }
 
-uint32_t pad_sdl_get_state(uint32_t port, HostState *s) {
+static uint32_t get_live(uint32_t port, HostState *s) {
     if (state != 1 || port >= MAX_PADS) return 1167;
     S.UpdateGamepads();
     scan();
@@ -220,7 +220,7 @@ uint32_t pad_sdl_get_state(uint32_t port, HostState *s) {
     return 0;
 }
 
-uint32_t pad_sdl_set_state(uint32_t port, uint16_t *vib) {
+static uint32_t set_live(uint32_t port, uint16_t *vib) {
     if (state != 1 || port >= MAX_PADS || !pads[port]) return 1167;
     if (vib[0] != rumble[port].lo || vib[1] != rumble[port].hi) {
         S.RumbleGamepad(pads[port], vib[0], vib[1], 0xFFFF);
@@ -248,7 +248,7 @@ static void check(const char *what, int ok) {
 static void settle(int slot, HostState *s) {
     S.UpdateGamepads();
     memset(s, 0, sizeof *s);
-    pad_sdl_get_state((uint32_t)slot, s);
+    get_live((uint32_t)slot, s);
 }
 
 static void pad_selftest(void) {
@@ -318,11 +318,11 @@ static void pad_selftest(void) {
         S.SetJoystickVirtualAxis(jv, SDL_GAMEPAD_AXIS_RIGHTX, 0);
         S.SetJoystickVirtualAxis(jv, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, -32768);
         uint16_t v[2] = {0x4000, 0xC000};
-        pad_sdl_set_state((uint32_t)sv, v);
+        set_live((uint32_t)sv, v);
         snprintf(what, sizeof what, "rumble (got %04X %04X)", vrumble[0], vrumble[1]);
         check(what, vrumble[0] == 0x4000 && vrumble[1] == 0xC000);
         v[0] = v[1] = 0;
-        pad_sdl_set_state((uint32_t)sv, v);
+        set_live((uint32_t)sv, v);
         check("rumble off", !vrumble[0] && !vrumble[1]);
     }
     if (jg) {
@@ -355,7 +355,7 @@ static void pad_selftest(void) {
     LOG("[padtest] %d/%d passed\n", test_pass, test_total);
 }
 
-int pad_sdl_init(void) {
+static int init_real(void) {
     if (state >= 0) return state;
     state = 0;
     const char *err = NULL;
@@ -391,13 +391,22 @@ int pad_sdl_init(void) {
     const char *dir = path;
 #else
     char dir[4000];
+#ifdef __ANDROID__
+    ssize_t len = 0;   /* /proc/self/exe is app_process; the working directory is the app's files folder */
+#else
     ssize_t len = readlink("/proc/self/exe", dir, sizeof dir - 1);
     while (len > 0 && dir[len - 1] != '/') len--;
     dir[len > 1 ? len - 1 : 0] = 0;
+#endif
     if (!*dir) strcpy(dir, ".");
 #endif
+#ifdef __ANDROID__
+    int db = S.AddGamepadMappingsFromFile("gamecontrollerdb.txt");   /* relative = the APK's assets */
+    if (!getcwd(dir, sizeof dir)) strcpy(dir, ".");
+#else
     snprintf(file, sizeof file, "%s/gamecontrollerdb.txt", dir);
     int db = S.AddGamepadMappingsFromFile(file);
+#endif
     snprintf(file, sizeof file, "%s/controllers.txt", dir);
     int own = S.AddGamepadMappingsFromFile(file);
     LOG("[input] SDL gamepads ready (%d mappings from gamecontrollerdb.txt%s)\n", db < 0 ? 0 : db,
@@ -407,3 +416,44 @@ int pad_sdl_init(void) {
     if (t && *t == '1') pad_selftest();
     return 1;
 }
+
+#ifndef __ANDROID__
+int pad_sdl_init(void) { return init_real(); }
+uint32_t pad_sdl_get_state(uint32_t port, HostState *s) { return get_live(port, s); }
+uint32_t pad_sdl_set_state(uint32_t port, uint16_t *vib) { return set_live(port, vib); }
+#else
+/* Android: SDL may call into Java (rumble, device lists), and Java checks the stack pointer against the thread's
+ * own stack, so guest fibers only read a copy that sched_run refreshes from the main stack (android_pad_poll). */
+static HostState cache[MAX_PADS];
+static int cache_ok[MAX_PADS];
+static uint16_t want[MAX_PADS][2];
+static int want_new[MAX_PADS];
+int pad_sdl_init(void) { return 1; }   /* the real init runs in the first android_pad_poll */
+uint32_t pad_sdl_get_state(uint32_t port, HostState *s) {
+    if (port >= MAX_PADS || !cache_ok[port]) return 1167;
+    *s = cache[port];
+    return 0;
+}
+uint32_t pad_sdl_set_state(uint32_t port, uint16_t *vib) {
+    if (port >= MAX_PADS || !cache_ok[port]) return 1167;
+    want[port][0] = vib[0];
+    want[port][1] = vib[1];
+    want_new[port] = 1;
+    return 0;
+}
+void android_pad_poll(void) {
+    static uint64_t last;
+    if (state < 0) init_real();
+    if (state != 1) return;
+    uint64_t t = now_ms();
+    if (t - last < 4) return;
+    last = t;
+    for (uint32_t k = 0; k < MAX_PADS; k++) {
+        HostState h;
+        memset(&h, 0, sizeof h);
+        cache_ok[k] = get_live(k, &h) == 0;
+        cache[k] = h;
+        if (want_new[k]) { want_new[k] = 0; set_live(k, want[k]); }
+    }
+}
+#endif

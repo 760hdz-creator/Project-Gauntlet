@@ -3,6 +3,9 @@
 #include <setjmp.h>
 #include <stdlib.h>
 #include "rt.h"
+#ifdef __ANDROID__
+#include <SDL3/SDL_main.h>   /* SDLActivity calls SDL_main in libmain.so */
+#endif
 
 typedef struct { uint32_t va; GuestFunc fn; } FuncEntry;
 extern const FuncEntry g_functable[];
@@ -148,7 +151,12 @@ static void load_settings(void) {
 static void crash_handler(int sig, siginfo_t *si, void *uc_) {
     ucontext_t *uc = uc_;
     uintptr_t addr = (uintptr_t)si->si_addr;
-    LOG("FATAL: host signal %d at %p, data %p (guest %08llX)\n", sig, (void *)uc->uc_mcontext.gregs[REG_RIP],
+#ifdef __aarch64__
+    void *pc = (void *)uc->uc_mcontext.pc;
+#else
+    void *pc = (void *)uc->uc_mcontext.gregs[REG_RIP];
+#endif
+    LOG("FATAL: host signal %d at %p, data %p (guest %08llX)\n", sig, pc,
         (void *)addr, (unsigned long long)(addr - (uintptr_t)g_mem));
     void *bt[24];
     int n = backtrace(bt, 24);
@@ -214,6 +222,9 @@ int main(int argc, char **argv) {
         while (n && dir[n - 1] != '\\') n--;
         if (n) { dir[n - 1] = 0; SetCurrentDirectoryA(dir); }
     }
+#elif defined(__ANDROID__)
+    android_start();   /* sdl_plat.c: the app's files folder, log to out/gauntlet.log, window (on the main stack) */
+    linux_set_argv(argv);
 #else
     if (argc <= 1 && GetFileAttributesA(xbe) == INVALID_FILE_ATTRIBUTES) {   /* installed: run from the exe's folder */
         char dir[MAX_PATH];
@@ -224,6 +235,10 @@ int main(int argc, char **argv) {
     linux_set_argv(argv);
 #endif
     load_settings();
+#ifdef __ANDROID__
+    setenv("GT_SCALE", "3", 0);   /* phone defaults (settings.ini in the files folder overrides) */
+    setenv("GT_MSAA", "2", 0);
+#endif
     if (getenv("GT_FPS") && atoi(getenv("GT_FPS")) == 60) g_frame_ms = 17;
     if (getenv("GT_DRAWDIST")) {
         int d = atoi(getenv("GT_DRAWDIST"));

@@ -2,11 +2,57 @@
  * runs until it waits, sleeps or yields. Guest time follows host time. */
 #include <windows.h>
 #include <stdlib.h>
+#include <string.h>
 #include "rt.h"
 #ifndef _WIN32
 /* Linux: fibers on ucontext, each with an 8 MB lazily committed stack (DXVK, vkd3d's HLSL compiler and the
  * Vulkan driver also run on these stacks: more room than the 256 KB Windows fibers). */
 #include <sys/mman.h>
+#ifdef __ANDROID__
+/* Android's libc has no ucontext functions: a minimal aarch64 switch (callee-saved x19-x30, d8-d15, sp). A new
+ * fiber's first switch "returns" into gt_fiber_start, which calls fiber_tramp. */
+#define FIBER_STACK (8u << 20)
+#define FRAME 176   /* 12 x + 8 d registers = 160 bytes, rounded to keep sp 16-byte aligned */
+void gt_ctx_swap(void **save_sp, void *load_sp);
+void gt_fiber_start(void);
+__asm__(".text\n"
+        ".global gt_ctx_swap\n.type gt_ctx_swap,%function\ngt_ctx_swap:\n"
+        "    sub sp, sp, #176\n"
+        "    stp x19, x20, [sp, #0]\n    stp x21, x22, [sp, #16]\n    stp x23, x24, [sp, #32]\n"
+        "    stp x25, x26, [sp, #48]\n    stp x27, x28, [sp, #64]\n    stp x29, x30, [sp, #80]\n"
+        "    stp d8, d9, [sp, #96]\n    stp d10, d11, [sp, #112]\n    stp d12, d13, [sp, #128]\n"
+        "    stp d14, d15, [sp, #144]\n"
+        "    mov x2, sp\n    str x2, [x0]\n    mov sp, x1\n"
+        "    ldp x19, x20, [sp, #0]\n    ldp x21, x22, [sp, #16]\n    ldp x23, x24, [sp, #32]\n"
+        "    ldp x25, x26, [sp, #48]\n    ldp x27, x28, [sp, #64]\n    ldp x29, x30, [sp, #80]\n"
+        "    ldp d8, d9, [sp, #96]\n    ldp d10, d11, [sp, #112]\n    ldp d12, d13, [sp, #128]\n"
+        "    ldp d14, d15, [sp, #144]\n"
+        "    add sp, sp, #176\n    ret\n"
+        ".global gt_fiber_start\n.type gt_fiber_start,%function\ngt_fiber_start:\n"
+        "    mov x29, #0\n    bl gt_fiber_entry\n    brk #0\n");
+typedef struct { void *sp; } Fiber;
+static Fiber main_fb, *running_fb = &main_fb;
+static void fiber_tramp(void);
+void gt_fiber_entry(void) { fiber_tramp(); }
+static void *ConvertThreadToFiber(void *p) { (void)p; return &main_fb; }
+static void *CreateFiber(size_t size, void (*fn)(void *), void *arg) {
+    (void)size; (void)fn; (void)arg;   /* fiber_tramp starts sched_current() */
+    Fiber *f = calloc(1, sizeof *f);
+    uint8_t *stk = mmap(NULL, FIBER_STACK, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (!f || stk == MAP_FAILED) return NULL;
+    mprotect(stk, 65536, PROT_NONE);   /* guard (covers 4/16/64 KB pages) */
+    uint64_t *frame = (uint64_t *)(stk + FIBER_STACK - FRAME);
+    memset(frame, 0, FRAME);
+    frame[11] = (uint64_t)(uintptr_t)gt_fiber_start;   /* x30 */
+    f->sp = frame;
+    return f;
+}
+static void SwitchToFiber(void *to) {
+    Fiber *from = running_fb;
+    running_fb = to;
+    gt_ctx_swap(&from->sp, ((Fiber *)to)->sp);
+}
+#else
 #include <ucontext.h>
 static ucontext_t main_uc;
 static ucontext_t *running_uc = &main_uc;
@@ -31,6 +77,7 @@ static void SwitchToFiber(void *f) {
     running_uc = f;
     swapcontext(from, f);
 }
+#endif
 #endif
 
 /* Guest KPCR layout (subset used by XDK code). */
@@ -196,9 +243,17 @@ void sched_run(void) {
 #ifndef _WIN32
         linux_pump_events();   /* SDL events belong to this (main) thread; the Windows build has a window thread */
 #endif
+#ifdef __ANDROID__
+        android_pad_poll();   /* SDL may call into Java: only from this (the thread's own) stack */
+        if (g_android_relaunch) android_relaunch();
+#endif
         Sleep(0);
     }
 }
+
+#ifdef __ANDROID__
+volatile int g_android_relaunch;
+#endif
 
 void sched_sleep_until(uint64_t t100ns) {
     while (sched_now_100ns() < t100ns) gt_sched_yield();

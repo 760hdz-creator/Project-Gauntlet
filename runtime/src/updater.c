@@ -271,6 +271,9 @@ static DWORD WINAPI update_thread(void *arg) {
 #endif
 
 void updater_start(void) {
+#ifdef __ANDROID__
+    return;   /* a new version is a new APK, built on the PC */
+#endif
     const char *no = getenv("GT_NOUPDATE");
     if (!GT_VERSION[0] || getenv("GT_INPUT") || (no && *no == '1')) return;
     HANDLE t = CreateThread(NULL, 0, update_thread, NULL, 0, NULL);

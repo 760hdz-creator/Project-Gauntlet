@@ -569,8 +569,8 @@ class Emitter:
         if m in ("cvttss2si", "cvtss2si"):
             src = f"RDF32({self.addr(ins, ops[1])})" if ops[1].type == X.X86_OP_MEM else \
                 f"c->xmm[{self.vreg(ins, ops[1])[1]}].f[0]"
-            fn = "truncf" if m == "cvttss2si" else "nearbyintf"
-            e(self.write(ins, ops[0], f"(uint32_t)(int32_t){fn}({src})", 4))
+            fn = "x86_cvtf2i_trunc" if m == "cvttss2si" else "x86_cvtf2i_near"   # x86 result out of range (ARM saturates)
+            e(self.write(ins, ops[0], f"{fn}({src})", 4))
             return
         if m in ("cvtps2pi", "cvttps2pi"):
             # two packed floats (xmm low qword or m64) -> two int32 in an MMX register
@@ -1099,9 +1099,8 @@ class Emitter:
             sz = ops[0].size
             a = self.addr(ins, ops[0])
             if m == "fisttp":
-                v = f"trunc(ST(0))"
-                conv = {2: f"WR16({a}, (uint16_t)(int16_t){v});", 4: f"WR32({a}, (uint32_t)(int32_t){v});",
-                        8: f"WR64({a}, (uint64_t)(int64_t){v});"}[sz]
+                conv = {2: f"WR16({a}, (uint16_t)FISTT16(ST(0)));", 4: f"WR32({a}, (uint32_t)FISTT32(ST(0)));",
+                        8: f"WR64({a}, (uint64_t)FISTT64(ST(0)));"}[sz]
             else:
                 conv = {2: f"WR16({a}, (uint16_t)FIST16(c, ST(0)));", 4: f"WR32({a}, (uint32_t)FIST32(c, ST(0)));",
                         8: f"WR64({a}, (uint64_t)FIST64(c, ST(0)));"}[sz]

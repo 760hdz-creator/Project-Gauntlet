@@ -19,6 +19,21 @@ static void toggle_fullscreen(void) {
 /* GT_MONITOR=N picks display N (SDL order). Default as on Windows: the installed game (gauntlet.sh sets
  * GT_INSTALLED=1) opens on the primary display and takes focus; dev/test runs open on the first other display. */
 HWND linux_create_window(void) {
+#ifdef __ANDROID__
+    /* made by android_start on the main stack; always fullscreen landscape */
+    if (g_win) return (HWND)g_win;
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+    SDL_SetHint(SDL_HINT_APP_NAME, "Project Gauntlet");
+    if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) { LOG("[gpu] SDL video unavailable: %s\n", SDL_GetError()); return NULL; }
+    g_video = 1;
+    g_win = SDL_CreateWindow("Project Gauntlet", 0, 0,
+                             SDL_WINDOW_FULLSCREEN | SDL_WINDOW_VULKAN | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+    if (!g_win) { LOG("[gpu] SDL_CreateWindow failed: %s\n", SDL_GetError()); return NULL; }
+    int w = 0, h = 0;
+    SDL_GetWindowSizeInPixels(g_win, &w, &h);
+    LOG("[gpu] window %dx%d\n", w, h);
+    return (HWND)g_win;
+#endif
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     SDL_SetHint(SDL_HINT_APP_NAME, "Project Gauntlet");
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
@@ -179,3 +194,44 @@ SHORT GetAsyncKeyState(int vk) {
 /* gamepads: pad_sdl.c (shared with Windows). Nothing else loads libraries on Linux. */
 HMODULE LoadLibraryA(const char *name) { (void)name; return NULL; }
 void *GetProcAddress(HMODULE m, const char *name) { (void)m; (void)name; return NULL; }
+
+#ifdef __ANDROID__
+/* ---------------- Android start / restart ---------------- */
+#include <jni.h>
+#include <sys/stat.h>
+void android_start(void) {
+    const char *dir = SDL_GetAndroidExternalStoragePath();   /* Android/data/<package>/files */
+    if (!dir || chdir(dir)) {
+        dir = SDL_GetAndroidInternalStoragePath();
+        if (!dir || chdir(dir)) dir = "?";
+    }
+    mkdir("out", 0755);
+    rename("out/gauntlet.log", "out/gauntlet-previous.log");
+    if (!freopen("out/gauntlet.log", "w", stderr)) {}
+    LOG("[android] files folder %s\n", dir);
+    if (access("game/Default.xbe", R_OK)) {
+        char msg[1024];
+        snprintf(msg, sizeof msg, "The game files are missing: copy the disc's files to\n%s/game", dir);
+        LOG("[android] %s\n", msg);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Project Gauntlet", msg, NULL);
+        _exit(1);
+    }
+    linux_create_window();
+}
+
+/* HalReturnToFirmware: GauntletActivity.relaunch() starts a helper process that opens the game again and ends
+ * this one (an Android app cannot exec itself) */
+void android_relaunch(void) {
+    LOG("[android] relaunch\n");
+    fflush(NULL);
+    JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+    jobject act = (jobject)SDL_GetAndroidActivity();
+    if (env && act) {
+        jclass cls = (*env)->GetObjectClass(env, act);
+        jmethodID m = cls ? (*env)->GetMethodID(env, cls, "relaunch", "()V") : NULL;
+        if (m) (*env)->CallVoidMethod(env, act, m);
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    }
+    for (;;) SDL_Delay(1000);   /* the helper ends this process */
+}
+#endif

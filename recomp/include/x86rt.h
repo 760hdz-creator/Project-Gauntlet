@@ -110,6 +110,17 @@ static inline int64_t FIST64(X86Context *c, double v) {
     v = FROUND(c, v);
     return (v >= -9223372036854775808.0 && v < 9223372036854775808.0) ? (int64_t)v : INT64_MIN;
 }
+/* fisttp: truncate; out of range or NaN gives the x86 "integer indefinite" (a plain C cast is undefined there and
+ * saturates on ARM) */
+static inline int16_t FISTT16(double v) { v = trunc(v); return (v >= -32768.0 && v <= 32767.0) ? (int16_t)v : (int16_t)0x8000; }
+static inline int32_t FISTT32(double v) {
+    v = trunc(v);
+    return (v >= -2147483648.0 && v <= 2147483647.0) ? (int32_t)v : (int32_t)0x80000000;
+}
+static inline int64_t FISTT64(double v) {
+    v = trunc(v);
+    return (v >= -9223372036854775808.0 && v < 9223372036854775808.0) ? (int64_t)v : INT64_MIN;
+}
 double x87_load80(uint32_t a);
 void x87_store80(uint32_t a, double v);
 

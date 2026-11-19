@@ -8,6 +8,9 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <time.h>
+#ifdef __ANDROID__
+#include "rt.h"   /* g_android_relaunch, gt_sched_yield */
+#endif
 #include <unistd.h>
 #undef fopen
 
@@ -387,6 +390,10 @@ static char **saved_argv;
 void linux_set_argv(char **argv) { saved_argv = argv; }
 _Noreturn void linux_relaunch(void) {
     fflush(NULL);
+#ifdef __ANDROID__
+    g_android_relaunch = 1;   /* runs on a guest fiber: the restart goes through Java from sched_run */
+    for (;;) gt_sched_yield();
+#endif
     if (saved_argv) execv("/proc/self/exe", saved_argv);
     _exit(0);
 }

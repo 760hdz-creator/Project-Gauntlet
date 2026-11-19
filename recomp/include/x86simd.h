@@ -115,5 +115,6 @@ static inline uint32_t x86_cvtf2i_trunc(float f) {
     return (f >= -2147483648.0f && f < 2147483648.0f) ? (uint32_t)(int32_t)f : 0x80000000u;
 }
 static inline uint32_t x86_cvtf2i_near(float f) {   /* MXCSR default: round to nearest even */
-    return (f >= -2147483648.0f && f < 2147483648.0f) ? (uint32_t)(int32_t)nearbyintf(f) : 0x80000000u;
+    f = nearbyintf(f);
+    return (f >= -2147483648.0f && f < 2147483648.0f) ? (uint32_t)(int32_t)f : 0x80000000u;
 }

@@ -92,3 +92,11 @@ void fs_close(Handle *h);
 void linux_set_argv(char **argv);
 _Noreturn void linux_relaunch(void);
 #endif
+#ifdef __ANDROID__
+/* Android (linux/sdl_plat.c): working directory = the app's external files folder, stderr -> out/gauntlet.log,
+ * the window created on the main stack (SDL calls into Java there; Java checks the stack pointer) */
+void android_start(void);
+void android_relaunch(void);   /* restart the activity (Java), then the process ends */
+void android_pad_poll(void);
+extern volatile int g_android_relaunch;   /* set by a guest thread; sched_run restarts from the main stack */   /* pad_sdl.c: SDL gamepad calls on the main stack (sched_run) */
+#endif

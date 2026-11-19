@@ -138,6 +138,9 @@ static void load_settings(void) {
     }
 }
 
+/* Frame-end wait (lifted 95FB0, see recomp/lift.py SOURCE_PATCHES): 34 ms = the original 29.4 fps cap, GT_FPS=60 -> 17 ms. */
+uint32_t g_frame_ms = 34;
+
 int main(int argc, char **argv) {
     const char *xbe = argc > 1 ? argv[1] : "game/Default.xbe";
     if (argc <= 1 && GetFileAttributesA(xbe) == INVALID_FILE_ATTRIBUTES) {   /* installed: run from the exe's folder */
@@ -147,6 +150,7 @@ int main(int argc, char **argv) {
         if (n) { dir[n - 1] = 0; SetCurrentDirectoryA(dir); }
     }
     load_settings();
+    if (getenv("GT_FPS") && atoi(getenv("GT_FPS")) == 60) g_frame_ms = 17;
     CreateDirectoryA("out", NULL);
     if (!GetConsoleWindow() && (GetStdHandle(STD_ERROR_HANDLE) == NULL ||
                                 GetStdHandle(STD_ERROR_HANDLE) == INVALID_HANDLE_VALUE))

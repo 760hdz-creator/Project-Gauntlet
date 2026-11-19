@@ -44,7 +44,7 @@ static const wchar_t kShortcut[] = L"Project Gauntlet.lnk";
 enum { ID_ISO_EDIT = 200, ID_ISO_BROWSE, ID_DIR_EDIT, ID_DIR_BROWSE, ID_DESKTOP, ID_STARTMENU, ID_INSTALL, ID_PROGRESS,
        ID_STATUS, ID_HD_EDIT, ID_HD_BROWSE, ID_HD_USE, ID_HD_STATUS, ID_PLAY, ID_UPDATE, ID_UNINSTALL, ID_FULLSCREEN,
        ID_WIDESCREEN, ID_SCALE, ID_MSAA, ID_ANISO, ID_PADS, ID_SHARPEN, ID_FXAA, ID_CRT, ID_CONTROLS, ID_CTL_BACK,
-       ID_CTL_DEFAULTS, ID_KEY0 = 2000, ID_PADM0 = 2100 };
+       ID_CTL_DEFAULTS, ID_FPS60, ID_KEY0 = 2000, ID_PADM0 = 2100 };
 #define WM_APP_STATUS (WM_APP + 1)
 #define WM_APP_PROGRESS (WM_APP + 2)
 #define WM_APP_DONE (WM_APP + 3)
@@ -503,6 +503,7 @@ static void LoadSettings() {
     SetOn(ID_WIDESCREEN, IniGet(g_instDir, L"settings", L"GT_WIDESCREEN") != L"0");
     SetOn(ID_FXAA, IniGet(g_instDir, L"settings", L"GT_FXAA") == L"1");
     SetOn(ID_CRT, IniGet(g_instDir, L"settings", L"GT_CRT") == L"1");
+    SetOn(ID_FPS60, IniGet(g_instDir, L"settings", L"GT_FPS") == L"60");
     std::wstring tex = IniGet(g_instDir, L"settings", L"GT_HDTEX"), folder = IniGet(g_instDir, L"launcher", L"HdFolder");
     if (folder.empty() && tex != L"0") folder = tex;
     SetOn(ID_HD_USE, tex != L"0");
@@ -518,6 +519,7 @@ static void SaveSettings() {
     IniSet(g_instDir, L"settings", L"GT_WIDESCREEN", IsOn(ID_WIDESCREEN) ? L"" : L"0");
     IniSet(g_instDir, L"settings", L"GT_FXAA", IsOn(ID_FXAA) ? L"1" : L"");
     IniSet(g_instDir, L"settings", L"GT_CRT", IsOn(ID_CRT) ? L"1" : L"");
+    IniSet(g_instDir, L"settings", L"GT_FPS", IsOn(ID_FPS60) ? L"60" : L"");
     std::wstring folder = GetText(g_hd);
     IniSet(g_instDir, L"launcher", L"HdFolder", folder);
     IniSet(g_instDir, L"settings", L"GT_HDTEX", !IsOn(ID_HD_USE) ? L"0" : folder);
@@ -905,7 +907,7 @@ static bool LauncherCommand(HWND h, int id, int code) {
     case ID_HD_EDIT:
         if (code == EN_KILLFOCUS) { UpdateHdStatus(); SaveSettings(); }
         return true;
-    case ID_FULLSCREEN: case ID_WIDESCREEN: case ID_HD_USE: case ID_FXAA: case ID_CRT:
+    case ID_FULLSCREEN: case ID_WIDESCREEN: case ID_HD_USE: case ID_FXAA: case ID_CRT: case ID_FPS60:
         if (code == BN_CLICKED) SaveSettings();
         return true;
     case ID_SCALE: case ID_MSAA: case ID_ANISO: case ID_PADS: case ID_SHARPEN:
@@ -1033,9 +1035,10 @@ static void CreateLauncherControls() {
     ShowWindow(g_updBtn, SW_HIDE);
     g_status = Make(L"STATIC", L"Checking for updates...", SS_LEFT, ID_STATUS, x, t + 205, fw, 50, g_smallFont);
     MakeCheck(L"Fullscreen (F11 toggles)", ID_FULLSCREEN, x, t + 296, 300);
-    MakeCheck(L"Widescreen", ID_WIDESCREEN, x + 320, t + 296, 300);
+    MakeCheck(L"Widescreen", ID_WIDESCREEN, x + 320, t + 296, 160);
     MakeCheck(L"FXAA (smooths edges)", ID_FXAA, x, t + 334, 300);
     MakeCheck(L"CRT scanlines", ID_CRT, x + 320, t + 334, 300);
+    MakeCheck(L"60 fps (beta)", ID_FPS60, x + 490, t + 296, 190);
     MakeCombo(ID_SCALE, kScale, 6, cx, t + 376, cw);
     MakeCombo(ID_MSAA, kMsaa, 4, cx, t + 420, cw);
     MakeCombo(ID_ANISO, kAniso, 5, cx, t + 464, cw);

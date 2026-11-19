@@ -7,6 +7,7 @@
 #include "x86rt.h"
 
 uint8_t *g_mem;
+uint32_t g_frame_ms = 34;
 
 typedef struct { uint32_t va; GuestFunc fn; } FuncEntry;
 extern const FuncEntry g_functable[];

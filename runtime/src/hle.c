@@ -554,6 +554,21 @@ void x86_hle(X86Context *c, uint32_t va) {
     }
     case 0xB1B72: /* DWORD GetTickCount(void): polled in timing loops, so it yields (above) */
         c->eax = (uint32_t)(sched_now_100ns() / 10000);
+        {   /* GT_TICKLOG=1: histogram of GetTickCount callers every 10 s (timing research) */
+            static int on = -1; static uint32_t ra[64], cnt[64]; static uint64_t next;
+            if (on < 0) on = getenv("GT_TICKLOG") != NULL;
+            if (on) {
+                uint32_t r = RD32(c->esp);
+                int i = 0;
+                while (i < 64 && ra[i] && ra[i] != r) i++;
+                if (i < 64) { ra[i] = r; cnt[i]++; }
+                uint64_t now = sched_now_100ns();
+                if (now > next) {
+                    next = now + 100000000ull;
+                    for (int k = 0; k < 64 && ra[k]; k++) { LOG("[tick] %08X x%u\n", ra[k], cnt[k]); cnt[k] = 0; }
+                }
+            }
+        }
         c->esp += 4;
         return;
     case 0x10F49F: /* VOID XInitDevices(DWORD n, PXDEVICE_PREALLOC_TYPE types) */
@@ -606,6 +621,17 @@ void x86_hle(X86Context *c, uint32_t va) {
         uint32_t h = ARG(0);
         if (!pad_ok(h)) { ret_std(c, 2, ERROR_DEVICE_NOT_CONNECTED_); return; }
         fill_state(ARG(1), (int)(h & 3));
+        {   /* GT_POSLOG=1: player 0 position (parent-relative floats at +0x44) every 0.5 s (frame-rate research) */
+            static int on = -1; static uint64_t next;
+            if (on < 0) on = getenv("GT_POSLOG") != NULL;
+            uint64_t now = sched_now_100ns();
+            if (on && now > next) {
+                next = now + 5000000;
+                float v[3];
+                for (int k = 0; k < 3; k++) { uint32_t w = RD32(0xBB4F60u + 0x44 + k * 4); memcpy(&v[k], &w, 4); }
+                LOG("[pos] t=%.1f %.2f %.2f %.2f\n", now / 1e7, v[0], v[1], v[2]);
+            }
+        }
         {   /* GT_GOD=1 (test cheat): keep every living player at full health. Health = float at player + 0x3658
              * (players 0xBB4F60, stride 0x6140); max as player_max_health (66EC0): (level - 1) * [1149A8] +
              * [114C50], capped at [114C48], level = player + 0x6108. */

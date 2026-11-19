@@ -666,7 +666,9 @@ void kernel_poll(void) {
     uint64_t now = sched_now_100ns();
     static uint64_t next_vblank;
     if (now >= next_vblank) {
-        next_vblank = now + 166667;   /* 60 Hz */
+        static uint64_t period;
+        if (!period) { const char *e = getenv("GT_VBLANKHZ"); int hz = e ? atoi(e) : 60; period = 10000000ull / (hz > 0 ? hz : 60); }
+        next_vblank = now + period;   /* 60 Hz (GT_VBLANKHZ: timing experiments) */
         nv2a_vblank();
     }
     for (int i = 0; i < ntimers; i++) {

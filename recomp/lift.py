@@ -1198,6 +1198,21 @@ class Emitter:
 
 # --------------------------------------------------------------------------- driver
 
+# Host-side tunables patched into specific lifted functions: (va, old C text, new C text, expected count).
+# 95FB0 (frame end) busy-waits until GetTickCount - last >= 34 ms (the 29.4 fps cap); g_frame_ms (runtime main.c,
+# GT_FPS=60 -> 17 ms) replaces the constant. The game's time step comes from the elapsed 60 Hz vsync count.
+SOURCE_PATCHES = [(0x95FB0, "b = (uint32_t)0x22u", "b = g_frame_ms", 2)]
+
+
+def source_patch(va, code):
+    for pva, old, new, n in SOURCE_PATCHES:
+        if pva == va:
+            if code.count(old) != n:
+                raise SystemExit(f"source patch {pva:X}: expected {n} x {old!r}, found {code.count(old)}")
+            code = code.replace(old, new)
+    return code
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("xbe")
@@ -1272,7 +1287,7 @@ def main():
                     '#pragma clang diagnostic ignored "-Wunused-variable"\n\n')
             for s in order[i : i + args.per_file]:
                 em = Emitter(prog, funcs[s], starts)
-                o.write(em.run())
+                o.write(source_patch(s, em.run()))
                 o.write("\n\n")
                 unimpl.update(em.unimpl)
         nfiles += 1

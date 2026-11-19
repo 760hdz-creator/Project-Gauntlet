@@ -1273,11 +1273,13 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
     pc.at[3] = 1.f;   /* output alpha scale */
     {   /* Hit flash: the game overlays a hit model with a second pass, stage 1 = solid texture * full-white diffuse
          * (x2), which clamps to flat white and stays up to ~1 s on knockback/death. GT_HITFLASH=0..100 scales that
-         * overlay's opacity (default 35; 100 = as the game draws it, 0 = no flash). */
+         * overlay's opacity (default 35; 100 = as the game draws it, 0 = no flash). The flash texture is a solid 8x8;
+         * the death dissolve and spawn effects use the same combiner with 16x16+ noise textures and are left alone. */
         static int hf = -1;
         if (hf < 0) { const char *e = getenv("GT_HITFLASH"); hf = e ? atoi(e) : 35; if (hf < 0) hf = 0; if (hf > 100) hf = 100; }
         if (hf < 100 && (KREG(K_COMB_CONTROL) & 0xFF) >= 2 && KREG(K_COMB_COLOR_ICW + 4) == 0x09040000 &&
-            KREG(K_COMB_ALPHA_ICW + 4) == 0x191C0000 && v[0].a[3][0] > 0.99f && v[0].a[3][1] > 0.99f && v[0].a[3][2] > 0.99f) {
+            KREG(K_COMB_ALPHA_ICW + 4) == 0x191C0000 && v[0].a[3][0] > 0.99f && v[0].a[3][1] > 0.99f && v[0].a[3][2] > 0.99f &&
+            ((KREG(K_TEX_FORMAT(1)) >> 20) & 0xF) <= 3 && ((KREG(K_TEX_FORMAT(1)) >> 24) & 0xF) <= 3) {
             if (!hf) return;
             pc.at[3] = hf / 100.f;
         }
@@ -1330,7 +1332,7 @@ static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *i
                 fl_frame = frame_no; fl_n = 0;
             }
             if ((KREG(K_COMB_CONTROL) & 0xFF) >= 2 && KREG(K_COMB_COLOR_ICW + 4) == 0x09040000 && v[0].a[3][0] > 0.99f) {
-                uint32_t t0 = KREG(K_TEX_OFFSET(0));
+                uint32_t t0 = getenv("GT_FLASHTEX1") ? KREG(K_TEX_OFFSET(1)) : KREG(K_TEX_OFFSET(0));   /* GT_FLASHTEX1: log stage-1 textures */
                 int k = 0;
                 while (k < fl_n && fl_tex[k] != t0) k++;
                 if (k == fl_n && fl_n < 64) fl_tex[fl_n++] = t0;

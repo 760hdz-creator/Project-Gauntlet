@@ -113,10 +113,10 @@ static int *probe(int *tab, uint64_t tex0, uint64_t clut, uint32_t bits, int by_
 /* ---------------- loader thread ---------------- */
 
 static CRITICAL_SECTION q_lock;
-static HANDLE q_event;
+static HANDLE q_sem;     /* one count per queued id; several loader threads take from the queue */
 static int q_buf[4096]; static unsigned q_head, q_tail;
 static ID3D11Device *q_dev;
-static IWICImagingFactory *wic;
+static __declspec(thread) IWICImagingFactory *wic;   /* one factory per loader thread */
 
 /* PNG -> RGBA8 (R in the low byte) with GS alpha (0x80 = 1.0) scaled to 8 bits. NULL on failure. */
 static uint32_t *decode_png(const char *path, UINT *pw, UINT *ph) {
@@ -239,12 +239,12 @@ static DWORD WINAPI loader_thread(LPVOID unused) {
     }
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     for (;;) {
-        WaitForSingleObject(q_event, INFINITE);
-        for (;;) {
+        WaitForSingleObject(q_sem, INFINITE);
+        {
             EnterCriticalSection(&q_lock);
             int id = q_head != q_tail ? q_buf[q_head++ % 4096] : -1;
             LeaveCriticalSection(&q_lock);
-            if (id < 0) break;
+            if (id < 0) continue;
             Entry *e = &ents[id];
             DWORD t0 = GetTickCount();
             if (e->ref) {   /* decided once; the entry then loads like any other */
@@ -258,6 +258,9 @@ static DWORD WINAPI loader_thread(LPVOID unused) {
             e->srv = px ? upload(px, w, h, &e->bytes) : NULL;
             if (g_log) LOG("[hdtex] load %s: %s (%lu ms)\n", pool + e->path, e->srv ? "ok" : "FAILED", GetTickCount() - t0);
             InterlockedExchange(&e->state, e->srv ? 2 : 3);
+            static volatile LONG done;
+            LONG d = InterlockedIncrement(&done);
+            if (g_log && d % 50 == 0) LOG("[hdtex] %ld loaded at %lu ms\n", d, GetTickCount());
         }
     }
 }
@@ -292,7 +295,7 @@ int hdtex_enabled(void) {
         else if (*s >= 0) *s = -*s - 3;   /* several files: no CLUT-less fallback */
     }
     InitializeCriticalSection(&q_lock);
-    q_event = CreateEventA(NULL, FALSE, FALSE, NULL);
+    q_sem = CreateSemaphoreA(NULL, 0, 0x7FFFFFFF, NULL);
     const char *vb = getenv("GT_HDVRAM");
     if (vb && atoi(vb) > 0) g_budget = (uint64_t)atoi(vb) << 20;
     g_enabled = 1;
@@ -452,11 +455,22 @@ ID3D11ShaderResourceView *hdtex_get(ID3D11Device *dev, int id) {
         return e->srv;
     }
     if (st != 0) return NULL;
-    static HANDLE thr;
-    if (!thr) { q_dev = dev; thr = CreateThread(NULL, 0, loader_thread, NULL, 0, NULL); }
+    static int started;
+    if (!started) {   /* loader threads: half the logical CPUs, 2..8 (PNG decode is the cost) */
+        started = 1;
+        q_dev = dev;
+        SYSTEM_INFO si;
+        GetSystemInfo(&si);
+        int n = (int)si.dwNumberOfProcessors / 2;
+        if (n < 2) n = 2;
+        if (n > 8) n = 8;
+        for (int i = 0; i < n; i++) CloseHandle(CreateThread(NULL, 0, loader_thread, NULL, 0, NULL));
+        LOG("[hdtex] %d loader threads\n", n);
+    }
+    int queued = 0;
     EnterCriticalSection(&q_lock);
-    if (q_tail - q_head < 4096) { q_buf[q_tail++ % 4096] = id; e->state = 1; }
+    if (q_tail - q_head < 4096) { q_buf[q_tail++ % 4096] = id; e->state = 1; queued = 1; }
     LeaveCriticalSection(&q_lock);
-    SetEvent(q_event);
+    if (queued) ReleaseSemaphore(q_sem, 1, NULL);
     return NULL;
 }

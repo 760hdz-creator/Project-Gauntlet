@@ -6,6 +6,8 @@ usage: python -I tools/gt_build.py --root <install dir> [--iso <image.iso>] [--j
   3. tools/match_pdb.py (game/shell3D.pdb from the disc) -> <root>/build/pdb_match.tsv
   4. recomp/lift.py -> <root>/build/lifted/*.c
   5. clang-cl (LLVM) + MSVC/Windows SDK libraries (VS Build Tools, found with vswhere) -> <root>/gauntlet.exe
+     Linux: clang (or gcc) compiles the lifted code and links it with the prebuilt runtime from the Linux package
+     (linux/libgtrt.a + linux/lib/*.so: SDL3, DXVK Native, vkd3d-shader) -> <root>/gauntlet, rpath $ORIGIN/lib
 Progress lines start with "## ", a failure with "ERROR: " (the installer shows both). Logs go to stdout.
 Nothing from the disc leaves the player's PC.
 """
@@ -78,6 +80,55 @@ def msvc_env():
     return env
 
 
+def linux_cc():
+    """clang preferred (what the Windows build uses), gcc as fallback; CC overrides."""
+    for cc in [os.environ.get("CC"), "clang", "gcc", "cc"]:
+        if cc and shutil.which(cc):
+            return shutil.which(cc)
+    fail("No C compiler found. Install clang (or gcc) with your package manager, e.g. sudo apt install clang")
+
+
+def compile_all_linux(jobs, cc, items):
+    def one(it):
+        src, obj, flags = it
+        return src, run([cc] + flags + ["-c", src, "-o", obj])
+    done = 0
+    with concurrent.futures.ThreadPoolExecutor(jobs) as ex:
+        for src, (code, out) in ex.map(one, items):
+            done += 1
+            if code:
+                fail(f"compile failed: {os.path.basename(src)}
+{out[-3000:]}")
+            print(f"compiled {os.path.basename(src)} ({done}/{len(items)})", flush=True)
+
+
+def build_linux(root, build, lifted, jobs):
+    rt = os.path.join(KIT, "linux")
+    if not os.path.exists(os.path.join(rt, "libgtrt.a")):
+        fail("linux/libgtrt.a is missing from the build kit (use the Linux package).")
+    step("Finding the C compiler")
+    cc = linux_cc()
+    print("compiler: " + cc, flush=True)
+    items = [(os.path.join(lifted, f), os.path.join(lifted, f[:-2] + ".o"),
+              ["-O2", "-fno-strict-aliasing", "-w", "-I" + os.path.join(rt, "include")])
+             for f in sorted(os.listdir(lifted)) if f.endswith(".c")]
+    step(f"Compiling {len(items)} files with {jobs} jobs (several minutes)")
+    compile_all_linux(jobs, cc, items)
+    step("Linking gauntlet")
+    lib = os.path.join(root, "lib")
+    if os.path.isdir(lib):
+        shutil.rmtree(lib)
+    shutil.copytree(os.path.join(rt, "lib"), lib)
+    libs = [os.path.join(lib, f) for f in sorted(os.listdir(lib)) if ".so" in f]
+    exe = os.path.join(root, "gauntlet")
+    code, out = run([cc, "-o", exe + ".new"] + [it[1] for it in items] + [os.path.join(rt, "libgtrt.a")] + libs +
+                    ["-lm", "-lpthread", "-ldl", "-Wl,-rpath,$ORIGIN/lib"])
+    if code:
+        fail("link failed:
+" + out[-3000:])
+    os.replace(exe + ".new", exe)
+
+
 def compile_all(jobs, env, items):
     """items: (source, object, flags). Compiles in parallel; stops at the first failure."""
     def one(it):
@@ -102,6 +153,8 @@ def main():
     root = os.path.abspath(a.root)
     game, build = os.path.join(root, "game"), os.path.join(root, "build")
     py = [sys.executable, "-I"]
+    if os.name != "nt":   # Linux: the kit's capstone (pylib/) goes on sys.path; -I ignores PYTHONPATH
+        py.append(os.path.join(HERE, "pyrun.py"))
     jobs = a.jobs or max(1, min(os.cpu_count() or 2, 8))
 
     if a.iso:
@@ -134,6 +187,14 @@ def main():
     print(out[-1500:], flush=True)
     if code:
         fail("code translation failed:\n" + out[-2000:])
+
+    if os.name != "nt":
+        build_linux(root, build, lifted, jobs)
+        with open(os.path.join(root, "build", "version.txt"), "w") as f:
+            f.write(a.version + "
+")
+        step("Done")
+        return
 
     step("Finding the C compiler")
     env = msvc_env()

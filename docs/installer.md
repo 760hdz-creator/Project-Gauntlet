@@ -81,3 +81,23 @@ the game is lifted and compiled on the player's PC from their own disc image.
   with the HD picker not run.
 - Not run on a clean PC (toolchain install, file dialogs): test in Windows Sandbox.
 - Setup and game exe are unsigned (SmartScreen / Defender may warn).
+
+## Linux (branch `linux`)
+- Package `ProjectGauntlet-Linux-<ver>.tar.gz` from `tools/package_linux.sh` (run in WSL/Linux on a checkout of the
+  branch): `setup.sh`, `README-Linux.txt`, `kit/` = the SHIP files (LF), `tools/pyrun.py`, capstone 5.0.7 from the
+  manylinux wheel in `kit/pylib`, and the prebuilt runtime `kit/linux/libgtrt.a` (our code, built by
+  `tools/build_linux.sh` with `-DGT_VERSION`) + `kit/linux/lib/` (SDL3, DXVK Native D3D11/DXGI, vkd3d-shader) +
+  licenses. ~5 MB. Same FORBIDDEN check as Windows.
+- Player needs python3 >= 3.8, clang or gcc, libvulkan.so.1 (setup.sh checks and names the package to install).
+  `gt_build.py` on Linux: lift as on Windows (child scripts through `tools/pyrun.py`, which puts `kit/pylib` on
+  sys.path because `-I` ignores PYTHONPATH), then `clang -O2 -fno-strict-aliasing` on the lifted files, link with
+  libgtrt.a and `<root>/lib/*.so`, rpath `$ORIGIN/lib` -> `<root>/gauntlet`.
+- `setup.sh --iso <img> [--dir D] [--hd pack] [--play] [--no-gui]`; `--update --dir D` (also what the game's
+  updater runs from the downloaded package); `--uninstall --dir D` (keeps `out/`). Default D =
+  `~/.local/share/project-gauntlet`. zenity dialogs + progress when started without a terminal. Writes
+  `gauntlet.sh` (cd + `2>out/gauntlet.log`), a commented `settings.ini` (GT_* keys as the Windows launcher), the
+  menu entry `~/.local/share/applications/project-gauntlet.desktop` (with an Uninstall action) and the icon. The
+  kit stays in `D/kit` (its setup.sh does update/uninstall).
+- Updater (runtime/src/updater.c Linux part): curl GETs forge releases/latest, asset `ProjectGauntlet-Linux*.tar.gz`,
+  zenity/kdialog asks, download + extract to /tmp, `setup.sh --update --dir <cwd> --play`, exit.
+- No graphical launcher on Linux (settings.ini by hand).

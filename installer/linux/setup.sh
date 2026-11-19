@@ -142,6 +142,7 @@ cat > "$dir/gauntlet.sh" <<'EOF'
 # Starts Project Gauntlet from its folder; the log goes to out/gauntlet.log. Settings: settings.ini.
 cd -- "$(dirname -- "$0")" || exit 1
 mkdir -p out
+export DXVK_LOG_PATH=out DXVK_STATE_CACHE_PATH=out
 exec ./gauntlet "$@" 2>out/gauntlet.log
 EOF
 chmod +x "$dir/gauntlet.sh" "$dir/kit/setup.sh"

@@ -74,7 +74,7 @@ if [[ -n $lifted ]]; then
     wait || true
     for o in "${lobjs[@]}"; do [[ -f $o ]] || { echo "compile failed: $o" >&2; exit 1; }; done
     "$cc" -o "$exe" "${lobjs[@]}" "$build/libgtrt.a" "$build/lib/libSDL3.so.0" "$build/lib/libdxvk_d3d11.so" \
-        "$build/lib/libdxvk_dxgi.so" "$build/lib/libvkd3d-shader.so.1" -lm -lpthread -ldl -Wl,-rpath,'$ORIGIN/lib' \
+        "$build/lib/libdxvk_dxgi.so" "$build/lib/libvkd3d-shader.so.1" -lm -lpthread -ldl -Wl,--disable-new-dtags -Wl,-rpath,'$ORIGIN/lib' \
         -Wl,-rpath,"$build/lib"
     echo "game: $exe"
 fi

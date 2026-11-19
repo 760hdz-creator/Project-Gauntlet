@@ -121,7 +121,7 @@ def build_linux(root, build, lifted, jobs):
     libs = [os.path.join(lib, f) for f in sorted(os.listdir(lib)) if ".so" in f]
     exe = os.path.join(root, "gauntlet")
     code, out = run([cc, "-o", exe + ".new"] + [it[1] for it in items] + [os.path.join(rt, "libgtrt.a")] + libs +
-                    ["-lm", "-lpthread", "-ldl", "-Wl,-rpath,$ORIGIN/lib"])
+                    ["-lm", "-lpthread", "-ldl", "-Wl,--disable-new-dtags", "-Wl,-rpath,$ORIGIN/lib"])
     if code:
         fail("link failed:\n" + out[-3000:])
     os.replace(exe + ".new", exe)

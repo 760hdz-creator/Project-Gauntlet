@@ -432,6 +432,19 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
     shared registry key + shortcuts (back up HKCU\Software\ProjectGauntlet, ...\Uninstall\ProjectGauntlet and both
     .lnk, restore after); Desktop is C:\Users\<user>\OneDrive\Desktop.
 
+- 2026-11-19 LINUX PORT (branch `linux`, worktree G:\gt-linux; Windows code paths unchanged, Windows runtime
+  still compiles). DXVK Native (D3D11 on Vulkan, SDL3 WSI) + vkd3d-shader (D3DCompile) + SDL3, reusing the TTT2
+  Linux builds in WSL (~/ttt2-deps, ~/.cache/ttt2-platform/shared-dxvk). Win32-subset shim
+  runtime/src/linux/include/windows.h + linux/win32.c (paths: '\' -> '/', case-insensitive per component),
+  linux/sdl_plat.c (window = HWND, events pumped from sched_run, VK -> scancode, XInput on SDL gamepads),
+  linux/d3dcompiler_vkd3d.c, stb_image for HD PNGs. ucontext fibers (8 MB stacks), memfd double-map, SDL audio
+  stream, execv relaunch, curl updater. sched_yield -> gt_sched_yield (libc symbol clash).
+  - WSL test (llvmpipe Vulkan): first-boot relaunch, intro movie, Tower, A1 combat render correctly; 16-19 fps at
+    scale 4 2560x1440 on the CPU rasterizer (real GPU untested). Lifter output on Linux == Windows (byte-identical).
+  - WSL dev loop: rsync G:\gt-linux -> ~/gt/src, `bash src/tools/build_linux.sh ~/gt/bl --lifted ~/gt/lifted`,
+    run in ~/gt/run (game -> ~/gt/data/game). Package: clone of the branch in ~/gt/repo,
+    `tools/package_linux.sh ~/gt/dist` -> ProjectGauntlet-Linux-<ver>.tar.gz (docs/installer.md "Linux").
+
 ## Next
 0. User is playtesting. When they say it is good: move tag v0.2.0 to HEAD (force-push the tag to both remotes; ask
    first), rebuild dist\ProjectGauntlet-Setup-0.2.0.exe, publish on the forge (tea, notes in the session's

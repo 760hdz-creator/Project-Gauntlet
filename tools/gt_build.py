@@ -97,8 +97,7 @@ def compile_all_linux(jobs, cc, items):
         for src, (code, out) in ex.map(one, items):
             done += 1
             if code:
-                fail(f"compile failed: {os.path.basename(src)}
-{out[-3000:]}")
+                fail(f"compile failed: {os.path.basename(src)}\n{out[-3000:]}")
             print(f"compiled {os.path.basename(src)} ({done}/{len(items)})", flush=True)
 
 
@@ -124,8 +123,7 @@ def build_linux(root, build, lifted, jobs):
     code, out = run([cc, "-o", exe + ".new"] + [it[1] for it in items] + [os.path.join(rt, "libgtrt.a")] + libs +
                     ["-lm", "-lpthread", "-ldl", "-Wl,-rpath,$ORIGIN/lib"])
     if code:
-        fail("link failed:
-" + out[-3000:])
+        fail("link failed:\n" + out[-3000:])
     os.replace(exe + ".new", exe)
 
 
@@ -191,8 +189,7 @@ def main():
     if os.name != "nt":
         build_linux(root, build, lifted, jobs)
         with open(os.path.join(root, "build", "version.txt"), "w") as f:
-            f.write(a.version + "
-")
+            f.write(a.version + "\n")
         step("Done")
         return
 

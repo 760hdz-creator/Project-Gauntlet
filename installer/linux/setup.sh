@@ -11,7 +11,7 @@
 set -eu
 here=$(cd -- "$(dirname -- "$0")" && pwd)
 version=$(cat "$here/kit/VERSION" 2>/dev/null || echo 0.0.0)
-mode=install iso="" dir="" hd="" play=0
+mode=install iso="" dir="" hd="" play=0 nogui=0
 while [ $# -gt 0 ]; do
     case $1 in
     --iso) iso=$2; shift 2 ;;
@@ -20,6 +20,7 @@ while [ $# -gt 0 ]; do
     --update) mode=update; shift ;;
     --uninstall) mode=uninstall; shift ;;
     --play) play=1; shift ;;
+    --no-gui) nogui=1; shift ;;
     -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
     esac
@@ -27,7 +28,7 @@ done
 data=${XDG_DATA_HOME:-$HOME/.local/share}
 dir=${dir:-$data/project-gauntlet}
 gui=0
-if [ ! -t 0 ] && [ ! -t 1 ] && command -v zenity >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then gui=1; fi
+if [ $nogui = 0 ] && [ ! -t 0 ] && [ ! -t 1 ] && command -v zenity >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then gui=1; fi
 title="Project Gauntlet $version"
 
 say() { if [ $gui = 1 ]; then zenity --info --title "$title" --width 420 --text "$1" 2>/dev/null || true; else echo "$1"; fi; }

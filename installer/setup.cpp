@@ -345,8 +345,15 @@ static int Uninstall(const std::wstring& dir) {
                               L"texture pack in its own folder is not touched.").c_str(),
                     kAppName, MB_YESNO | MB_ICONQUESTION) != IDYES)
         return 1;
-    DeleteFileW((KnownDir(FOLDERID_Desktop) + L"\\" + kShortcut).c_str());
-    DeleteFileW((KnownDir(FOLDERID_Programs) + L"\\" + kShortcut).c_str());
+    // shortcuts and registry entries are shared: only remove them when they belong to this folder
+    wchar_t a[MAX_PATH] = L"", b[MAX_PATH] = L"";
+    std::wstring reg = GetReg(L"InstallLocation");
+    bool registered = reg.empty() || (GetFullPathNameW(reg.c_str(), MAX_PATH, a, nullptr) &&
+                                      GetFullPathNameW(dir.c_str(), MAX_PATH, b, nullptr) && !_wcsicmp(a, b));
+    if (registered) {
+        DeleteFileW((KnownDir(FOLDERID_Desktop) + L"\\" + kShortcut).c_str());
+        DeleteFileW((KnownDir(FOLDERID_Programs) + L"\\" + kShortcut).c_str());
+    }
     const wchar_t* parts[] = {L"build", L"game", L"python", L"recomp", L"runtime", L"tools", L"installer", L"licenses"};
     for (auto p : parts) {
         std::wstring from = dir + L"\\" + p + std::wstring(1, L'\0');
@@ -355,8 +362,10 @@ static int Uninstall(const std::wstring& dir) {
     }
     for (auto f : {L"gauntlet.exe", L"gauntlet.ico", L"README.md", L"VERSION", L"settings.ini"})
         DeleteFileW((dir + L"\\" + f).c_str());
-    RegDeleteTreeW(HKEY_CURRENT_USER, kRegKey);
-    RegDeleteTreeW(HKEY_CURRENT_USER, kUninstKey);
+    if (registered) {
+        RegDeleteTreeW(HKEY_CURRENT_USER, kRegKey);
+        RegDeleteTreeW(HKEY_CURRENT_USER, kUninstKey);
+    }
     MessageBoxW(nullptr, L"Project Gauntlet was removed. Your saves are kept in the install folder's out\\hdd.", kAppName,
                 MB_OK);
     // the launcher (or an old uninstall.exe) is deleted once this process has exited

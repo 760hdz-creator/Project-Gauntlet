@@ -95,11 +95,28 @@ XInput gamepads work too. Set the number of players and remap keys and buttons i
 
 ## Status
 
-The game boots and runs at full speed (30 fps, as on the Xbox). Every realm and boss up to the Lich and the Yeti
-has been played through, with saves, level progression and multiplayer working. Known gaps:
+**The game is playable from start to finish.** Every realm, boss and secret level has been played through on the
+recompiled build. Most of these runs used scripted input with test cheats (invincibility, low boss health) to get
+through quickly.
+
+| Area | State |
+|---|---|
+| Boot, intro movies, title, character select | Working (all 8 starting heroes) |
+| Tower hub, saves, loading, level progression | Working |
+| All eight realms and their bosses | Working (including the Lich, the Yeti and the Plague Fiend) |
+| Locked worlds and the final boss | Working: Skorne, Garm and the ending movie |
+| Secret levels S1 to S9 | All load and return to their parent level |
+| Multiplayer (up to 4 pads) | Working |
+| Sound, music, movies | Working |
+| HD textures, widescreen, MSAA, post-processing | Working |
+| 60 fps (beta) | Three realms played through to their bosses at 58-59 fps; game speed unchanged |
+| Installer, launcher, updates, uninstall | Fresh install, update and uninstall tested; the in-launcher update download waits for the first release |
+
+Known gaps:
 - About 8% of the textures seen in a level stay original: the pack has no file for them (Xbox-only art such as
   the A/B button icons, and some effect animations).
-- 60 fps is new: report anything that runs at the wrong speed.
+- With 60 fps on, loading screens finish about 2 seconds sooner. Report anything else that runs at the wrong speed.
+- Not yet tested on a clean PC (Windows Sandbox) or with other characters past the first level at 60 fps.
 
 ## How it works
 

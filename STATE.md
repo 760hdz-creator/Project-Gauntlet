@@ -454,6 +454,16 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
     Windows). No graphical launcher on Linux (settings.ini).
   - Not pushed. Windows runtime compiles with these changes (clang-cl, all 12 files); after a merge to master run
     relift.sh on Windows and boot before releasing.
+- 2026-11-19 CONTROLLERS (branch `linux`; CHANGES WINDOWS INPUT): runtime/src/pad_sdl.c = gamepads on SDL3 on both
+  platforms (Windows loads SDL3.dll next to the exe at run time; without it hle.c falls back to XInput). Covers
+  what SDL reads (Xbox, PS3/4/5, Switch Pro/Joy-Con, Steam Controller/Deck, 8BitDo, ...) + gamecontrollerdb.txt
+  (SDL_GameControllerDB pinned 4e87e3c6, shipped) + controllers.txt (player's own lines) + a generic layout for
+  any unmapped joystick. Slots: real gamepads first, connection order, player LED. vJoy (1234:BEAD) blacklisted
+  (this PC has it; it took player 1). Rumble 0xFFFF ms, renewed every 30 s (XInput rumble has no timeout).
+  Shipping: package.py downloads SDL3-3.4.18-win32-x64.zip + the DB into payload sdl3/, gt_build.py copies them to
+  the install root; uninstall lists updated. GT_PADTEST=1 = virtual-pad self test: 35/35 on Windows (built in
+  G:\gt-linux\out\win against out\lifted) and Linux. XInput fallback checked (SDL3.dll renamed). No real pad on
+  this PC: hand test with a real Xbox / PlayStation pad still needed before release.
 
 ## Next
 0. User is playtesting. When they say it is good: move tag v0.2.0 to HEAD (force-push the tag to both remotes; ask

@@ -444,6 +444,16 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   - WSL dev loop: rsync G:\gt-linux -> ~/gt/src, `bash src/tools/build_linux.sh ~/gt/bl --lifted ~/gt/lifted`,
     run in ~/gt/run (game -> ~/gt/data/game). Package: clone of the branch in ~/gt/repo,
     `tools/package_linux.sh ~/gt/dist` -> ProjectGauntlet-Linux-<ver>.tar.gz (docs/installer.md "Linux").
+  - Tested 2026-11-19: fresh install from the ISO (72 s, clang and CC=gcc), update rebuild byte-identical,
+    uninstall keeps out/ + settings.ini, HD pack (19633 PNG via stb_image) correct colours, gcc build plays A1,
+    in-game update end to end (GT_UPDATE_API local server + fake zenity: 0.2.0 -> 0.2.1, settings/out kept,
+    relaunch), clean containers ubuntu:24.04 + debian:trixie with the README apt line (0 missing libs),
+    ubuntu:22.04 refused (glibc 2.35 < 2.38). Floors: glibc 2.38 (prebuilt libs), Python 3.9 (3.8: capstone fails).
+  - Untested: real GPU (only llvmpipe), hand keyboard/gamepad input (GT_INPUT bypasses it), Wayland-native SDL,
+    Fedora/Arch package lines. First boot with an update available asks twice (pre- and post-relaunch; same on
+    Windows). No graphical launcher on Linux (settings.ini).
+  - Not pushed. Windows runtime compiles with these changes (clang-cl, all 12 files); after a merge to master run
+    relift.sh on Windows and boot before releasing.
 
 ## Next
 0. User is playtesting. When they say it is good: move tag v0.2.0 to HEAD (force-push the tag to both remotes; ask

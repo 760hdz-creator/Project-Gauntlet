@@ -6,7 +6,7 @@
 #   ./setup.sh --update --dir <folder> [--play]     rebuild with this package's kit (no disc needed)
 #   ./setup.sh --uninstall [--dir <folder>]         remove the game (keeps <folder>/out: saves, settings, log)
 #
-# Default folder: ${XDG_DATA_HOME:-~/.local/share}/project-gauntlet. Needs python3 (3.8+), clang or gcc, and a
+# Default folder: ${XDG_DATA_HOME:-~/.local/share}/project-gauntlet. Needs glibc 2.38+, python3 (3.9+), clang or gcc, and a
 # Vulkan driver (libvulkan.so.1). With zenity installed and no terminal, it asks with dialogs and shows progress.
 set -eu
 here=$(cd -- "$(dirname -- "$0")" && pwd)
@@ -78,7 +78,13 @@ fi
 
 # ---- checks ----
 command -v python3 >/dev/null 2>&1 || die "python3 is missing. Install it with your package manager (for example: sudo apt install python3)."
-python3 -c 'import sys; sys.exit(sys.version_info < (3, 8))' || die "python3 3.8 or newer is needed."
+python3 -c 'import sys; sys.exit(sys.version_info < (3, 9))' || die "python3 3.9 or newer is needed."
+# the prebuilt libraries (SDL3, DXVK, vkd3d, the runtime) need glibc 2.38+ and libstdc++ from GCC 13+
+glibc=$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}')
+case $glibc in
+2.*) [ "${glibc#2.}" -ge 38 ] 2>/dev/null || die "This Linux is too old for Project Gauntlet: it has glibc $glibc, 2.38 or newer is needed (Ubuntu 24.04, Debian 13, Fedora 39, Linux Mint 22, Arch, SteamOS 3.6 or newer)." ;;
+*) [ -n "$glibc" ] || die "Project Gauntlet needs a glibc-based Linux (glibc 2.38 or newer)." ;;
+esac
 cc_ok=0
 for c in ${CC:-} clang gcc cc; do command -v "$c" >/dev/null 2>&1 && cc_ok=1 && break; done
 [ $cc_ok = 1 ] || die "No C compiler found. Install clang (for example: sudo apt install clang, sudo dnf install clang, sudo pacman -S clang)."
@@ -119,13 +125,18 @@ set -- python3 -I "$dir/kit/tools/gt_build.py" --root "$dir" --version "$version
 [ -z "$iso" ] || set -- "$@" --iso "$iso"
 status=0
 if [ $gui = 1 ]; then
-    ( "$@" 2>&1 | tee "$log" | { p=0; while IFS= read -r line; do
+    # the build writes the log on its own; the dialog only follows it (closing the dialog never stops the build)
+    : > "$log"
+    "$@" > "$log" 2>&1 < /dev/null &
+    pid=$!
+    ( tail -n +1 -f --pid=$pid "$log" 2>/dev/null | { p=0; while IFS= read -r line; do
         case $line in
         "## Done"*) echo 100 ;;
         "## "*) [ $p -lt 40 ] && p=$((p + 6)); echo $p; echo "# ${line#\#\# }" ;;
         "compiled "*) n=${line##*(}; n=${n%)}; echo $(( 40 + 55 * ${n%/*} / ${n#*/} )) ;;
         esac
       done; } ) | zenity --progress --auto-close --no-cancel --title "$title" --width 460 --text "Starting" 2>/dev/null || true
+    wait $pid || true
     grep -q "^## Done" "$log" || status=1
 else
     "$@" 2>&1 | tee "$log" | grep --line-buffered -E "^(## |ERROR|compiled .*0/)" || true
@@ -142,7 +153,7 @@ cat > "$dir/gauntlet.sh" <<'EOF'
 # Starts Project Gauntlet from its folder; the log goes to out/gauntlet.log. Settings: settings.ini.
 cd -- "$(dirname -- "$0")" || exit 1
 mkdir -p out
-export DXVK_LOG_PATH=out DXVK_STATE_CACHE_PATH=out
+export DXVK_LOG_PATH=out DXVK_STATE_CACHE_PATH=out GT_INSTALLED=1
 exec ./gauntlet "$@" 2>out/gauntlet.log
 EOF
 chmod +x "$dir/gauntlet.sh" "$dir/kit/setup.sh"

@@ -16,8 +16,8 @@ static void toggle_fullscreen(void) {
     SDL_SetWindowFullscreen(g_win, !fs);   /* borderless desktop fullscreen (no mode change) */
 }
 
-/* GT_MONITOR=N picks display N (SDL order). Default as on Windows: the installed game (no terminal) opens on the
- * primary display and takes focus; terminal/test runs open on the first other display. */
+/* GT_MONITOR=N picks display N (SDL order). Default as on Windows: the installed game (gauntlet.sh sets
+ * GT_INSTALLED=1) opens on the primary display and takes focus; dev/test runs open on the first other display. */
 HWND linux_create_window(void) {
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     SDL_SetHint(SDL_HINT_APP_NAME, "Project Gauntlet");
@@ -29,9 +29,12 @@ HWND linux_create_window(void) {
     int n = 0;
     SDL_DisplayID *ids = SDL_GetDisplays(&n);
     SDL_DisplayID prim = SDL_GetPrimaryDisplay(), pick = prim;
+    int installed = getenv("GT_INSTALLED") && *getenv("GT_INSTALLED") == '1';
+    LOG("[gpu] %d display(s)
+", n);
     const char *me = getenv("GT_MONITOR");
     if (me && *me && ids && atoi(me) >= 0 && atoi(me) < n) pick = ids[atoi(me)];
-    else if (isatty(2) && ids)
+    else if (!installed && ids)
         for (int i = 0; i < n; i++) if (ids[i] != prim) { pick = ids[i]; break; }
     SDL_free(ids);
     SDL_Rect r = {0, 0, 1920, 1080};
@@ -53,7 +56,7 @@ HWND linux_create_window(void) {
     SDL_DestroyProperties(p);
     if (!g_win) { LOG("[gpu] SDL_CreateWindow failed: %s\n", SDL_GetError()); return NULL; }
     if (getenv("GT_FULLSCREEN") && *getenv("GT_FULLSCREEN") == '1') toggle_fullscreen();
-    if (!isatty(2)) SDL_RaiseWindow(g_win);
+    if (installed) SDL_RaiseWindow(g_win);
     SDL_ShowWindow(g_win);
     SDL_SyncWindow(g_win);
     return (HWND)g_win;

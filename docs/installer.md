@@ -88,7 +88,9 @@ the game is lifted and compiled on the player's PC from their own disc image.
   manylinux wheel in `kit/pylib`, and the prebuilt runtime `kit/linux/libgtrt.a` (our code, built by
   `tools/build_linux.sh` with `-DGT_VERSION`) + `kit/linux/lib/` (SDL3, DXVK Native D3D11/DXGI, vkd3d-shader) +
   licenses. ~5 MB. Same FORBIDDEN check as Windows.
-- Player needs python3 >= 3.8, clang or gcc, libvulkan.so.1 (setup.sh checks and names the package to install).
+- Player needs glibc >= 2.38 (prebuilt libs from Ubuntu 24.04: SDL3/vkd3d GLIBC_2.38, DXVK GLIBCXX_3.4.32,
+  libgtrt.a __isoc23_* symbols; setup.sh checks), python3 >= 3.9 (capstone 5.0.7 needs importlib.resources;
+  lift under 3.9 is byte-identical), clang or gcc, libvulkan.so.1 (setup.sh checks and names the package to install).
   `gt_build.py` on Linux: lift as on Windows (child scripts through `tools/pyrun.py`, which puts `kit/pylib` on
   sys.path because `-I` ignores PYTHONPATH), then `clang -O2 -fno-strict-aliasing` on the lifted files, link with
   libgtrt.a and `<root>/lib/*.so`, rpath `$ORIGIN/lib` -> `<root>/gauntlet`.

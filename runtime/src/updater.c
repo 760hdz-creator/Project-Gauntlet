@@ -4,7 +4,8 @@
  * yes downloads the release asset ProjectGauntlet-Setup-*.exe to %TEMP% and runs it with
  * "--update --dir <install dir>" (it rebuilds the game from the installed data and starts it again), then exits.
  * Off for dev builds (no GT_VERSION), scripted test runs (GT_INPUT) and GT_NOUPDATE=1.
- * Testing: GT_UPDATE_REPO=<owner/repo> and GT_UPDATE_ASSET=<asset name prefix> check another forge repo. */
+ * Testing: GT_UPDATE_REPO=<owner/repo> and GT_UPDATE_ASSET=<asset name prefix> check another forge repo;
+ * Linux also takes GT_UPDATE_API=<releases/latest URL> (http allowed while set). */
 #include <windows.h>
 #ifdef _WIN32
 #include <winhttp.h>
@@ -151,7 +152,12 @@ static DWORD WINAPI update_thread(void *arg) {
     char api[512];
     snprintf(api, sizeof api, "https://git.8gramlabs.com/api/v1/repos/%s/releases/latest",
              repo ? repo : "8gramlabs/Project-Gauntlet");
-    char *get[] = {"curl", "-sfL", "--max-time", "15", "-H", "Accept: application/json", api, NULL};
+    /* GT_UPDATE_API=<releases/latest URL>: test override; plain http is allowed only while it is set */
+    const char *test_api = getenv("GT_UPDATE_API");
+    if (test_api && *test_api) snprintf(api, sizeof api, "%s", test_api);
+    char *proto = test_api && *test_api ? "=http,https" : "=https";
+    char *get[] = {"curl", "-sfL", "--proto", proto, "--proto-redir", proto, "--max-time", "15", "-H",
+                   "Accept: application/json", api, NULL};
     if (run_argv(get, &body) != 0 || !body || !*body) {
         LOG("[update] no release found (or curl missing)\n");
         free(body);
@@ -184,7 +190,7 @@ static DWORD WINAPI update_thread(void *arg) {
     if (!mkdtemp(tmp)) return 0;
     char tgz[MAX_PATH], dir[MAX_PATH], setup[MAX_PATH];
     snprintf(tgz, sizeof tgz, "%s/update.tar.gz", tmp);
-    char *dl[] = {"curl", "-sfL", "--max-time", "600", "-o", tgz, url, NULL};
+    char *dl[] = {"curl", "-sfL", "--proto", proto, "--proto-redir", proto, "--max-time", "600", "-o", tgz, url, NULL};
     char *untar[] = {"tar", "-xzf", tgz, "-C", tmp, "--strip-components=1", NULL};
     if (run_argv(dl, NULL) != 0 || run_argv(untar, NULL) != 0) {
         LOG("[update] download failed\n");

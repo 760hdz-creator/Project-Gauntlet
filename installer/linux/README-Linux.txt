@@ -6,7 +6,8 @@ translates and compiles the game on your PC from your own disc image (about 2-5 
 
 You need
 - an Xbox disc image of Gauntlet: Dark Legacy (USA), XISO or redump .iso
-- python3 (3.8 or newer), clang or gcc, and a Vulkan driver
+- a Linux with glibc 2.38 or newer: Ubuntu 24.04, Debian 13, Fedora 39, Linux Mint 22, Arch, SteamOS 3.6 or newer
+- python3 (3.9 or newer), clang or gcc, and a Vulkan driver
   Ubuntu/Debian: sudo apt install python3 clang libvulkan1 mesa-vulkan-drivers
   Fedora:        sudo dnf install python3 clang vulkan-loader mesa-vulkan-drivers
   Arch:          sudo pacman -S python clang vulkan-icd-loader (plus your GPU's vulkan driver)

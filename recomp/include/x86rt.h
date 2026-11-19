@@ -38,6 +38,7 @@ uint64_t x86_rdtsc(X86Context *c);
 void x86_hle(X86Context *c, uint32_t va);
 void x86_hook(X86Context *c, uint32_t va);   /* entry hook for recomp/hooks.txt functions */
 extern uint32_t g_frame_ms;   /* frame-end wait in ms (recomp/lift.py SOURCE_PATCHES, set in runtime main.c) */
+void gt_quit_game(void);      /* "Quit Game?" confirmed (lift.py SOURCE_PATCHES): exits unless GT_QUIT=title */
 
 /* ---- memory ---- */
 static inline uint8_t RD8(uint32_t a) { return g_mem[a]; }

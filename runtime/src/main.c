@@ -141,6 +141,14 @@ static void load_settings(void) {
 /* Frame-end wait (lifted 95FB0, see recomp/lift.py SOURCE_PATCHES): 34 ms = the original 29.4 fps cap, GT_FPS=60 -> 17 ms. */
 uint32_t g_frame_ms = 34;
 
+/* The in-game "Quit Game?" confirmation: exit the program (the original returns to the title screen, GT_QUIT=title). */
+void gt_quit_game(void) {
+    const char *q = getenv("GT_QUIT");
+    if (q && !_stricmp(q, "title")) return;
+    LOG("[rt] Quit Game: exiting\n");
+    ExitProcess(0);
+}
+
 int main(int argc, char **argv) {
     const char *xbe = argc > 1 ? argv[1] : "game/Default.xbe";
     if (argc <= 1 && GetFileAttributesA(xbe) == INVALID_FILE_ATTRIBUTES) {   /* installed: run from the exe's folder */

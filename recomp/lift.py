@@ -1209,6 +1209,10 @@ SOURCE_PATCHES = [
     (0x95FB0, "b = (uint32_t)0x22u", "b = g_frame_ms", 2),
     (0x7A9E0, "eax = (uint32_t)(RD32((uint32_t)(0xBEB238u)));",
      "eax = (uint32_t)(((RD32(0x13439Cu) >> 1) - ((RD32(0x13439Cu) - RD32(0xBEB238u)) >> 1)) << 1);", 1),
+    # 602A0 (DoOptions): confirming "Quit Game?" sets [BCDC40] = 1 and the game returns to the title screen.
+    # gt_quit_game (runtime main.c) exits the program instead, unless GT_QUIT=title.
+    (0x602A0, "WR32((uint32_t)(0xBCDC40u), (uint32_t)((uint32_t)0x1u));",
+     "gt_quit_game(); WR32((uint32_t)(0xBCDC40u), (uint32_t)((uint32_t)0x1u));", 1),
 ]
 
 

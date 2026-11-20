@@ -28,6 +28,20 @@ widescreen, a locked 60 fps, MSAA, support for almost any controller and a launc
 > No game code or data ships with this project. The installer builds the game **on your PC from your own
 > Gauntlet: Dark Legacy (Xbox, USA) disc image**.
 
+> [!NOTE]
+> **Antivirus and "Windows protected your PC" warnings.** `ProjectGauntlet-Setup.exe` is not code-signed (signing
+> certificates cost money), so Windows SmartScreen and some antivirus programs may warn about it or flag it on
+> heuristics. The setup also compiles a brand-new `gauntlet.exe` on your PC (and, if you use it, a brand-new Android
+> APK) that no antivirus has seen before, which some engines dislike. These are false positives: nothing in it is
+> malicious.
+>
+> - **SmartScreen ("Windows protected your PC"):** click **More info**, then **Run anyway**.
+> - **Your antivirus quarantines `gauntlet.exe` after the build:** restore it and allow the install folder, then
+>   run the setup again (it updates in about a minute). Don't turn your antivirus off completely.
+> - Only download from the official [Forge](https://git.8gramlabs.com/8gramlabs/Project-Gauntlet/releases) or
+>   [GitLab](https://gitlab.com/octagram-labs-group/Project-Gauntlet/-/releases) release pages. All of the source
+>   code is right here, so you're always welcome to check what it does or [build it yourself](#building-from-source-developers).
+
 ## Features
 
 - **Native builds, no emulator.** Every function of `Default.xbe` is lifted to C and compiled for the machine it

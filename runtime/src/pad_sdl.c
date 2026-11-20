@@ -379,7 +379,10 @@ static int init_real(void) {
     /* vJoy (virtual joystick driver, often installed and idle) would take player 1; the environment variable
      * SDL_JOYSTICK_BLACKLIST_DEVICES overrides this list */
     S.SetHint("SDL_JOYSTICK_BLACKLIST_DEVICES", "0x1234/0xbead");
-    if (!S.InitSubSystem(SDL_INIT_GAMEPAD)) { LOG("[input] SDL gamepads unavailable: %s\n", S.GetError()); return 0; }
+    if (!S.InitSubSystem(SDL_INIT_GAMEPAD)) {
+        LOG("[input] SDL gamepads unavailable: %s\n", S.GetError());
+        return 0;
+    }
 #ifdef _WIN32
     S.SetJoystickEventsEnabled(false);   /* nothing reads SDL's event queue on Windows; states are polled */
     S.SetGamepadEventsEnabled(false);
@@ -392,7 +395,7 @@ static int init_real(void) {
 #else
     char dir[4000];
 #ifdef __ANDROID__
-    ssize_t len = 0;   /* /proc/self/exe is app_process; the working directory is the app's files folder */
+    dir[0] = 0;   /* /proc/self/exe is app_process; the working directory is the app's files folder */
 #else
     ssize_t len = readlink("/proc/self/exe", dir, sizeof dir - 1);
     while (len > 0 && dir[len - 1] != '/') len--;

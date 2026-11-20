@@ -73,6 +73,24 @@ db=$(ls "${GT_CACHE:-$HOME/.cache/project-gauntlet}"/gcdb-*-gamecontrollerdb.txt
 [[ -n $db ]] && cp "$db" "$apk/app/src/main/assets/gamecontrollerdb.txt"
 echo "runtime: $build/libgtrt.a"
 
+# the Android build kit (no game code): what tools/gt_android.py turns into the game's APK on the player's PC
+IFS=. read -r v1 v2 v3 <<<"$version"
+export ANDROID_HOME="$sdk" ANDROID_SDK_ROOT="$sdk"
+chmod +x "$apk/gradlew"
+libs=$apk/app/libs/arm64-v8a
+rm -rf "$libs"
+mkdir -p "$libs"
+cp "$build/lib/"*.so "$libs/"
+"$apk/gradlew" --project-dir "$apk" --no-daemon -q -PgtVersionName="$version" \
+    -PgtVersionCode=$((v1 * 10000 + v2 * 100 + v3)) assembleRelease
+kitdir=$build/android-kit
+rm -rf "$kitdir"
+mkdir -p "$kitdir/include"
+cp "$build/libgtrt.a" "$kitdir/"
+cp "$root/recomp/include/"*.h "$kitdir/include/"
+cp "$apk/app/build/outputs/apk/release/app-release.apk" "$kitdir/template.apk"
+echo "kit: $kitdir"
+
 [[ -n $lifted ]] || exit 0
 mkdir -p "$build/lifted-obj"
 lobjs=()
@@ -85,15 +103,10 @@ for f in "$lifted"/*.c; do
 done
 wait || true
 for o in "${lobjs[@]}"; do [[ -f $o ]] || { echo "compile failed: $o" >&2; exit 1; }; done
-libs=$apk/app/libs/arm64-v8a
-mkdir -p "$libs"
-cp "$build/lib/"*.so "$libs/"
 "$cc" -shared -o "$libs/libmain.so" "${lobjs[@]}" "$build/libgtrt.a" -L"$libs" -lSDL3 -ldxvk_d3d11 -ldxvk_dxgi \
     -lvkd3d-shader -landroid -llog -lm -Wl,-z,max-page-size=16384 -Wl,--no-undefined -Wl,-soname,libmain.so
-IFS=. read -r v1 v2 v3 <<<"$version"
-export ANDROID_HOME="$sdk" ANDROID_SDK_ROOT="$sdk"
-chmod +x "$apk/gradlew"
 "$apk/gradlew" --project-dir "$apk" --no-daemon -q -PgtVersionName="$version" \
     -PgtVersionCode=$((v1 * 10000 + v2 * 100 + v3)) assembleDebug
+rm -f "$libs/libmain.so"
 cp "$apk/app/build/outputs/apk/debug/app-debug.apk" "$build/gauntlet-$version-android-arm64-debug.apk"
 echo "apk: $build/gauntlet-$version-android-arm64-debug.apk"

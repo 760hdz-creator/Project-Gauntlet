@@ -210,6 +210,53 @@ void *GetProcAddress(HMODULE m, const char *name) { (void)m; (void)name; return 
 /* ---------------- Android start / restart ---------------- */
 #include <jni.h>
 #include <sys/stat.h>
+static void mkdirs(char *path) {   /* the folders of a file path */
+    for (char *p = path + 1; *p; p++)
+        if (*p == '/') { *p = 0; mkdir(path, 0755); *p = '/'; }
+}
+/* The APK built on the player's PC (tools/gt_android.py) carries their disc's files as assets: game.lst lists them
+ * ("# <build id>", then "<size> <path>" per file) and they are copied to files/game on the first start of each build.
+ * A dev APK has no game.lst (the files are copied in by hand). */
+static void unpack_game(void) {
+    size_t n = 0;
+    char *lst = SDL_LoadFile("game.lst", &n);
+    if (!lst) return;
+    char id[160] = "", have[160] = "";
+    sscanf(lst, "# %159s", id);
+    FILE *f = fopen("game/.build-id", "r");
+    if (f) { if (fscanf(f, "%159s", have) != 1) have[0] = 0; fclose(f); }
+    if (id[0] && !strcmp(id, have) && !access("game/Default.xbe", R_OK)) { SDL_free(lst); return; }
+    SDL_ShowAndroidToast("Project Gauntlet: preparing the game files (first start, about a minute)", 1, -1, 0, 0);
+    LOG("[android] unpacking the game files (build %s)\n", id);
+    remove("game/.build-id");
+    static char buf[1 << 20];
+    int files = 0;
+    for (char *line = strtok(lst, "\n"); line; line = strtok(NULL, "\n")) {
+        long long size;
+        char rel[1024], src[1100], dst[1100];
+        if (line[0] == '#' || sscanf(line, "%lld %1023[^\r\n]", &size, rel) != 2) continue;
+        snprintf(src, sizeof src, "game/%s", rel);
+        snprintf(dst, sizeof dst, "game/%s", rel);
+        mkdirs(dst);
+        SDL_IOStream *in = SDL_IOFromFile(src, "rb");
+        FILE *out = in ? fopen(dst, "wb") : NULL;
+        if (!in || !out) {
+            LOG("[android] cannot copy %s\n", rel);
+            if (in) SDL_CloseIO(in);
+            continue;
+        }
+        size_t r;
+        while ((r = SDL_ReadIO(in, buf, sizeof buf)) > 0) fwrite(buf, 1, r, out);
+        SDL_CloseIO(in);
+        fclose(out);
+        files++;
+    }
+    SDL_free(lst);
+    f = fopen("game/.build-id", "w");
+    if (f) { fprintf(f, "%s\n", id); fclose(f); }
+    LOG("[android] %d game files ready\n", files);
+}
+
 void android_start(void) {
     const char *dir = SDL_GetAndroidExternalStoragePath();   /* Android/data/<package>/files */
     if (!dir || chdir(dir)) {
@@ -220,6 +267,8 @@ void android_start(void) {
     rename("out/gauntlet.log", "out/gauntlet-previous.log");
     if (!freopen("out/gauntlet.log", "w", stderr)) {}
     LOG("[android] files folder %s\n", dir);
+    mkdir("game", 0755);
+    unpack_game();
     if (access("game/Default.xbe", R_OK)) {
         char msg[1024];
         snprintf(msg, sizeof msg, "The game files are missing: copy the disc's files to\n%s/game", dir);

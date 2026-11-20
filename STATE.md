@@ -504,9 +504,17 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   - Kit: tools/build_android.sh stage 1 -> <build>/android-kit (copy to dist/_cache/android-kit for package.py;
     package_linux.sh builds it itself).
 
+- 2026-11-19 ANDROID IN 0.2.0 (user decision): `android` fast-forwarded into main (local, unpushed). Fresh Windows
+  relift.sh (lift.py float-conversion change) + A1 route from the repo root: A1, combat, exit to the Tower, 29.4 fps,
+  no crash, no missed targets (anchor 1 = the death/stats hook, not reached when the hero survives). Rebuilt
+  dist\ProjectGauntlet-Setup-0.2.0.exe (payload: sdl3/, android/ kit from dist\_cache\android-kit = WSL
+  ~/gta/build/android-kit) and dist\ProjectGauntlet-Linux-0.2.0.tar.gz (13 MB, pk.sh now clones main). Linux check:
+  setup.sh --update, then --android (ANDROID_NDK_HOME set) -> signed APK; A1 loads after the update.
+
 ## Next
 0. User is playtesting. When they say it is good: move tag v0.2.0 to HEAD (force-push the tag to both remotes; ask
-   first), rebuild dist\ProjectGauntlet-Setup-0.2.0.exe, publish on the forge (tea, notes in the session's
+   first), rebuild dist\ProjectGauntlet-Setup-0.2.0.exe (+ the Linux tarball: both already rebuilt 2026-11-19 with
+   Linux + controllers + Android; attach both to the release), publish on the forge (tea, notes in the session's
    notes020.md; regenerate) and GitLab (glab release create; the auto-mode classifier blocked it once: needs the
    user's approval), then check the installed launcher sees it.
 1. Open: loading splash at 21:9 shows stale side areas; HD misses 52/636 (pack lacks Xbox-only art); not tested on a

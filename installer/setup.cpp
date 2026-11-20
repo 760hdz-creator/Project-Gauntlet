@@ -1165,7 +1165,8 @@ static void CreateLauncherControls() {
     HWND play = Make(L"BUTTON", L"Play", BS_DEFPUSHBUTTON | WS_TABSTOP, ID_PLAY, x, t + 130, 240, 64, g_titleFont);
     g_updBtn = Make(L"BUTTON", L"Update", BS_PUSHBUTTON | WS_TABSTOP, ID_UPDATE, x + 260, t + 130, 200, 64);
     ShowWindow(g_updBtn, SW_HIDE);
-    g_status = Make(L"STATIC", L"Checking for updates...", SS_LEFT, ID_STATUS, x, t + 205, fw, 50, g_smallFont);
+    // stops short of the Controls / Cheats / Android column (a full-width status repainted over the Android button)
+    g_status = Make(L"STATIC", L"Checking for updates...", SS_LEFT, ID_STATUS, x, t + 205, fw - 220, 50, g_smallFont);
     MakeCheck(L"Fullscreen (F11 toggles)", ID_FULLSCREEN, x, t + 296, 300);
     MakeCheck(L"Widescreen", ID_WIDESCREEN, x + 320, t + 296, 160);
     MakeCheck(L"FXAA (smooths edges)", ID_FXAA, x, t + 334, 300);

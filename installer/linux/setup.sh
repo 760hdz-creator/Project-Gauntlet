@@ -86,7 +86,7 @@ if [ $mode = uninstall ]; then
     if [ -f "$entry" ] && grep -qF "Path=$dir" "$entry"; then   # only the menu entry that belongs to this folder
         rm -f "$entry" "$data/icons/hicolor/256x256/apps/project-gauntlet.png"
     fi
-    rm -rf "$dir/kit" "$dir/game" "$dir/build" "$dir/lib" "$dir/gauntlet" "$dir/gauntlet.sh" "$dir/README-Linux.txt" \
+    rm -rf "$dir/kit" "$dir/game" "$dir/build" "$dir/lib" "$dir/android/ndk" "$dir/gauntlet" "$dir/gauntlet.sh" "$dir/README-Linux.txt" \
         "$dir/gamecontrollerdb.txt"
     rmdir "$dir" 2>/dev/null || true
     say "Project Gauntlet was removed. Your saves are still in $dir/out."

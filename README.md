@@ -79,6 +79,22 @@ Get a PCSX2 replacement pack for the PS2 version (serial `SLUS-20047`). Then pic
 `...\SLUS-20047\replacements`, in the setup or the launcher. The pack is used where it is and is not copied.
 Uninstalling never touches it.
 
+### Android
+
+The game also runs on Android phones and tablets (arm64, Android 13 or newer, Vulkan). The APK is built on your PC
+from your installed game, so it holds only your own copy:
+
+1. Install the game on your PC first (Windows setup above, or `setup.sh` on Linux).
+2. In the launcher, click **Android...** (Linux: `./setup.sh --android`). The first build downloads Google's Android
+   NDK (about 700 MB) and takes 10 to 20 minutes. Later builds take a few minutes.
+3. Copy `ProjectGauntlet-<version>-Android.apk` (about 1 GB) from the install folder to the phone and open it there.
+   Android asks you to allow installs from that app once.
+4. The first start unpacks the game files, which takes about a minute.
+
+On-screen controls show until a controller is connected. Each PC signs its APKs with its own key, stored in
+`android\signing-key.json` in the install folder. Keep that file: a new build only installs over the old one when it
+is signed with the same key.
+
 ## Controls
 
 | Xbox pad | Keyboard |

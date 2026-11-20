@@ -80,7 +80,7 @@ def main():
     for lic in (ANDROID_KIT / "licenses").glob("*"):
         shutil.copy2(lic, out / "licenses" / ("android_" + lic.name))
     with zipfile.ZipFile(ANDROID_KIT / "template.apk") as z:   # the template must hold no game code
-        if any(n.startswith("assets/game") or n.endswith("libmain.so") for n in z.namelist()):
+        if any(n.startswith(("assets/game/", "assets/game.lst")) or n.endswith("libmain.so") for n in z.namelist()):
             sys.exit("android template.apk holds game code")
     bad = [p for p in out.rglob("*") if p.is_file() and
            any(fnmatch.fnmatch(p.relative_to(out).as_posix().lower(), f.lower()) for f in FORBIDDEN)]

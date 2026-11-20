@@ -469,6 +469,30 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
     dist\ProjectGauntlet-Setup-0.2.0.exe rebuilt (payload has sdl3/SDL3.dll + gamecontrollerdb.txt + pad_sdl.c);
     gt_build.py from that payload into G:\gt-wintest: 59 s, SDL3.dll + DB copied, padtest 35/35 from a foreign cwd.
     Linux tarball not rebuilt since the controller commits: rerun pk.sh (WSL ~/gt/repo clone) before release.
+- 2026-11-19 ANDROID PORT (branch `android` from main, worktree G:\gt-android; local only, not pushed).
+  arm64, SDL3 + DXVK Native + vkd3d from the TTT2 Android deps (WSL ~/.cache/ttt2-android, NDK ~/Android).
+  - Runtime: aarch64 fiber switch in sched.c (bionic has no ucontext); SDL_main entry; android_start (cwd = app
+    external files dir, log files/out/gauntlet.log, window + video on the main stack); gamepads polled from
+    sched_run (android_pad_poll, SDL may call Java: never from a fiber stack); HalReturnToFirmware -> Java
+    RestartActivity (own process); no updater; defaults GT_SCALE=3 GT_MSAA=2; touch.c on-screen controls (floating
+    stick, ABXY, White/Black, LT/RT, BACK/START; drawn by gpu_d3d11.c touch_draw; hidden while slot 1 has a pad).
+  - Lifter: cvt(t)ss2si / fisttp emit x86 out-of-range results (ARM saturates); x86_cvtf2i_near rounds first.
+  - Bug found: pad_sdl.c read `dir` uninitialised on Android -> clang deleted the init success path (looked like
+    SDL_InitSubSystem failing with no error). Fixed.
+  - Phone (Galaxy S26 Ultra): intro movie plays with sound; gamepad self-test 35/35 on the phone. NOT yet seen on
+    the phone: touch overlay, title/menus/A1 gameplay, first-boot relaunch, background/resume, speed.
+    The user uses the phone: check the foreground app, stop the game after each test.
+  - Dev loop (WSL): scratchpad ab.sh (rsync -> ~/gta/src, lift to ~/gta/lifted, tools/build_android.sh ~/gta/build
+    --lifted ~/gta/lifted) -> debug APK; prun.sh <secs> install (install, start, screenshot, pull log, force-stop).
+    Game files in Android/data/com.eightgramlabs.gauntlet/files/game (copied with run-as from /data/local/tmp).
+  - Player pipeline: tools/gt_android.py (launcher "Android..." button, setup.sh --android): NDK r27c downloaded
+    once into <root>/android/ndk (compiler + arm64 sysroot only), lifted C -> libmain.so with kit android/libgtrt.a,
+    template.apk (no game code) + libmain.so + assets/game/* + assets/game.lst, pure-Python APK v2 signing with a
+    per-PC RSA key (<root>/android/signing-key.json). App unpacks assets to files/game on first start (build id).
+    WSL test: 24 s, apksigner verify OK (v2), zipalign -P 16 OK, APK 981 MB. Windows (payload in G:gt-wintest2,
+    embedded Python): NDK download + unpack (1 GB) + compile + sign OK, apksigner OK, 975 MB APK.
+  - Kit: tools/build_android.sh stage 1 -> <build>/android-kit (copy to dist/_cache/android-kit for package.py;
+    package_linux.sh builds it itself).
 
 ## Next
 0. User is playtesting. When they say it is good: move tag v0.2.0 to HEAD (force-push the tag to both remotes; ask

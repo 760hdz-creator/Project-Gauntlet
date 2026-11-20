@@ -540,8 +540,15 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
     dist\_cache\android-kit. Checked: Windows payload build + Android APK (apksigner OK) + boot; Linux update + A1
     at 30 (WSL llvmpipe too slow for 60 routes); phone installs and boots the Windows-built APK.
 
+- 2026-11-20 RELEASED 0.2.0 (user said push): main b029ea6 pushed to origin + forge; tag v0.2.0 moved (force-push of the
+  tag only, user approved) to that commit; releases on GitLab (glab) and the forge (tea) with
+  ProjectGauntlet-Setup-0.2.0.exe + ProjectGauntlet-Linux-0.2.0.tar.gz (sizes/sha checked; forge releases/latest =
+  v0.2.0, what the updater reads). README: badges (Windows/Linux/Android/version/60 fps/local MP/netplay soon), HD
+  pack link (Google Drive, optional). Packages checked: no disc files, no lifted code, template APK has no libmain/game.
+  Old history (8f8fc8c..2504216) still has assets/pdb_match.tsv (function names from the PDB); user told, left as is.
+
 ## Next
-0. User is playtesting. When they say it is good: move tag v0.2.0 to HEAD (force-push the tag to both remotes; ask
+0. (done 2026-11-20: 0.2.0 released.) Old: User is playtesting. When they say it is good: move tag v0.2.0 to HEAD (force-push the tag to both remotes; ask
    first), rebuild dist\ProjectGauntlet-Setup-0.2.0.exe (+ the Linux tarball: both already rebuilt 2026-11-19 with
    Linux + controllers + Android; attach both to the release), publish on the forge (tea, notes in the session's
    notes020.md; regenerate) and GitLab (glab release create; the auto-mode classifier blocked it once: needs the

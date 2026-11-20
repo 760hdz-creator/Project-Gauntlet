@@ -201,6 +201,25 @@ static void load_settings(void) {
 
 /* Frame-end wait (lifted 95FB0, see recomp/lift.py SOURCE_PATCHES): 34 ms = the original 29.4 fps cap, GT_FPS=60 -> 17 ms. */
 uint32_t g_frame_ms = 34;
+uint32_t g_frame_ticks = 2;   /* 60 Hz game ticks per frame: 2 = 30 fps (the original), 1 = 60 fps (GT_FPS=60) */
+/* The game's clock (A9310): [14E5AC] = 60 Hz ticks = (GetTickCount - [1526EC]) * 3 / 50 while [1526E8] is set.
+ * The frame end waits until GetTickCount - [148218] (the last frame's time) >= this: the next boundary of
+ * g_frame_ticks ticks, so each frame advances the game by exactly that many ticks (unless it ran long). */
+static int getenv_noidle(void) {
+    static int v = -1;
+    if (v < 0) v = getenv("GT_NOIDLE") && *getenv("GT_NOIDLE") == '1';
+    return v;
+}
+uint32_t gt_frame_need(void) {
+    uint32_t last = RD32(0x148218), t0 = RD32(0x1526EC);
+    if (!RD8(0x1526E8) || !t0) return g_frame_ms;
+    uint32_t k = (uint32_t)((uint64_t)(uint32_t)(last - t0) * 3 / 50);
+    uint32_t due = t0 + (uint32_t)(((uint64_t)(k + g_frame_ticks) * 50 + 2) / 3);   /* first ms of tick k + n */
+    /* the game polls GetTickCount in a loop until then: sleep this guest thread instead (others run, and the
+     * scheduler idles the host thread when nothing else is busy). GetTickCount = sched_now_100ns / 10000. */
+    if (!getenv_noidle()) sched_sleep_until((uint64_t)due * 10000);
+    return due - last;
+}
 /* Culling (lift.py SOURCE_PATCHES on 94A80): g_cull_x widens the game's 4:3 side planes to the widescreen view
  * (set by gpu_d3d11.c), g_cull_far scales its far distance (GT_DRAWDIST = percent, 100..400). */
 float g_cull_x = 1.0f, g_cull_far = 1.0f;
@@ -239,7 +258,7 @@ int main(int argc, char **argv) {
     setenv("GT_SCALE", "3", 0);   /* phone defaults (settings.ini in the files folder overrides) */
     setenv("GT_MSAA", "2", 0);
 #endif
-    if (getenv("GT_FPS") && atoi(getenv("GT_FPS")) == 60) g_frame_ms = 17;
+    if (getenv("GT_FPS") && atoi(getenv("GT_FPS")) == 60) { g_frame_ms = 17; g_frame_ticks = 1; }
     if (getenv("GT_DRAWDIST")) {
         int d = atoi(getenv("GT_DRAWDIST"));
         if (d >= 100 && d <= 400) g_cull_far = d / 100.0f;

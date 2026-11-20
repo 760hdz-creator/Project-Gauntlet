@@ -37,7 +37,8 @@ uint64_t x86_rdtsc(X86Context *c);
 /* Guest function replaced by a host implementation (recomp/hle.txt). Pops its own return address and args. */
 void x86_hle(X86Context *c, uint32_t va);
 void x86_hook(X86Context *c, uint32_t va);   /* entry hook for recomp/hooks.txt functions */
-extern uint32_t g_frame_ms;   /* frame-end wait in ms (recomp/lift.py SOURCE_PATCHES, set in runtime main.c) */
+extern uint32_t g_frame_ms;   /* frame-end wait in ms when the tick clock is not running (runtime main.c) */
+uint32_t gt_frame_need(void); /* frame-end wait: ms from the last frame to the next tick boundary (lift.py) */
 void gt_quit_game(void);      /* "Quit Game?" confirmed (lift.py SOURCE_PATCHES): exits unless GT_QUIT=title */
 extern float g_cull_x;        /* culling: horizontal scale (1 / widescreen factor), set by the renderer */
 extern float g_cull_far;      /* culling: far distance multiplier (GT_DRAWDIST percent / 100) */

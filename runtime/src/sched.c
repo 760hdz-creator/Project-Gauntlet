@@ -217,11 +217,38 @@ _Noreturn void sched_exit_thread(uint32_t status) {
     rt_fatal("dead thread resumed");
 }
 
+/* A round in which every thread only polled (waits, the frame-end wait) takes a few microseconds; then the host
+ * thread sleeps a quarter millisecond instead of spinning a whole core (heat and battery on phones, and the frame
+ * pacing does not need more: the game clock has 1 ms steps). GT_NOIDLE=1 keeps the old spin. */
+#ifdef _WIN32
+static void idle_sleep(void) {
+    static HANDLE timer;
+    static int init;
+    if (!init) {
+        init = 1;
+        timer = CreateWaitableTimerExW(NULL, NULL, 0x00000002 /* CREATE_WAITABLE_TIMER_HIGH_RESOLUTION */,
+                                       TIMER_ALL_ACCESS);
+    }
+    if (!timer) { Sleep(0); return; }
+    LARGE_INTEGER due;
+    due.QuadPart = -2500;   /* 250 us, relative, 100 ns units */
+    if (SetWaitableTimer(timer, &due, 0, NULL, NULL, FALSE)) WaitForSingleObject(timer, INFINITE);
+}
+#else
+#include <time.h>
+static void idle_sleep(void) {
+    struct timespec ts = {0, 250000};
+    nanosleep(&ts, NULL);
+}
+#endif
+
 void sched_run(void) {
     sched_now_100ns(); /* start the clock */
+    int idle_ok = !(getenv("GT_NOIDLE") && *getenv("GT_NOIDLE") == '1');
     main_fiber = ConvertThreadToFiber(NULL);
     for (;;) {
         int alive = 0;
+        uint64_t round_start = sched_now_100ns();
         for (GThread *t = threads; t; t = t->next) {
             if (t->state == T_DONE) continue;
             alive = 1;
@@ -247,7 +274,23 @@ void sched_run(void) {
         android_pad_poll();   /* SDL may call into Java: only from this (the thread's own) stack */
         if (g_android_relaunch) android_relaunch();
 #endif
-        Sleep(0);
+        uint64_t round_len = sched_now_100ns() - round_start;
+        if (idle_ok && round_len < 400) idle_sleep();   /* < 40 us: nothing but polling */
+        else Sleep(0);
+        {   /* GT_ROUNDLOG=1: scheduler rounds per second, idle sleeps, round length histogram */
+            static int on = -1; static uint64_t next, n, idle, h[6];
+            if (on < 0) on = getenv("GT_ROUNDLOG") != NULL;
+            if (on) {
+                n++; idle += round_len < 400;
+                h[round_len < 100 ? 0 : round_len < 400 ? 1 : round_len < 1000 ? 2 : round_len < 10000 ? 3 : round_len < 50000 ? 4 : 5]++;
+                uint64_t now = sched_now_100ns();
+                if (now >= next) {
+                    if (next) LOG("[sched] %llu rounds/s, %llu idle; <10us %llu <40us %llu <100us %llu <1ms %llu <5ms %llu more %llu\n",
+                                  n / 5, idle / 5, h[0], h[1], h[2], h[3], h[4], h[5]);
+                    next = now + 50000000; n = idle = 0; memset(h, 0, sizeof h);
+                }
+            }
+        }
     }
 }
 

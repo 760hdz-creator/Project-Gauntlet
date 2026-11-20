@@ -1198,14 +1198,16 @@ class Emitter:
 # --------------------------------------------------------------------------- driver
 
 # Host-side tunables patched into specific lifted functions: (va, old C text, new C text, expected count).
-# 95FB0 (frame end) busy-waits until GetTickCount - last >= 34 ms (the 29.4 fps cap); g_frame_ms (runtime main.c,
+# 95FB0 (frame end) busy-waits until GetTickCount - last >= 34 ms (the 29.4 fps cap); gt_frame_need() (runtime main.c)
+# returns the ms from the last frame to the next boundary of the game's 60 Hz tick clock instead (2 ticks = 30.0 fps,
+# 1 tick = 60.0 fps: exactly one or two ticks per frame, so dt never jitters). Before: g_frame_ms (runtime main.c,
 # GT_FPS=60 -> 17 ms) replaces the constant. The game's time step comes from the elapsed 60 Hz vsync count.
 # 7A9E0 (ProcessSkinFX: hit flash, death dissolve, spawn effects) advances its animation by [BEB238] >> 1, the
 # elapsed 60 Hz vsyncs as 30 Hz ticks. At 60 fps that is 1 >> 1 = 0 every frame, so the effects stall and a dying
 # enemy replays its death until it is removed. Use the 30 Hz ticks crossed this frame instead (from the frame's vsync
 # count [13439C]): identical at 30 fps, alternating 0/1 at 60 fps. The value is pre-doubled for the following shr.
 SOURCE_PATCHES = [
-    (0x95FB0, "b = (uint32_t)0x22u", "b = g_frame_ms", 2),
+    (0x95FB0, "b = (uint32_t)0x22u", "b = gt_frame_need()", 2),
     (0x7A9E0, "eax = (uint32_t)(RD32((uint32_t)(0xBEB238u)));",
      "eax = (uint32_t)(((RD32(0x13439Cu) >> 1) - ((RD32(0x13439Cu) - RD32(0xBEB238u)) >> 1)) << 1);", 1),
     # 602A0 (DoOptions): confirming "Quit Game?" sets [BCDC40] = 1 and the game returns to the title screen.

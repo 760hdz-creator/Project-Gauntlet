@@ -39,6 +39,7 @@ void x86_hle(X86Context *c, uint32_t va);
 void x86_hook(X86Context *c, uint32_t va);   /* entry hook for recomp/hooks.txt functions */
 extern uint32_t g_frame_ms;   /* frame-end wait in ms when the tick clock is not running (runtime main.c) */
 uint32_t gt_frame_need(void); /* frame-end wait: ms from the last frame to the next tick boundary (lift.py) */
+void gt_fncount(uint32_t va);  /* debug lifts (GT_LIFT_FNCOUNT=1): count calls per function (runtime main.c) */
 void gt_quit_game(void);      /* "Quit Game?" confirmed (lift.py SOURCE_PATCHES): exits unless GT_QUIT=title */
 extern float g_cull_x;        /* culling: horizontal scale (1 / widescreen factor), set by the renderer */
 extern float g_cull_far;      /* culling: far distance multiplier (GT_DRAWDIST percent / 100) */
@@ -56,6 +57,10 @@ static inline void WR32(uint32_t a, uint32_t v) { memcpy(g_mem + a, &v, 4); }
 static inline void WR64(uint32_t a, uint64_t v) { memcpy(g_mem + a, &v, 8); }
 static inline void WRF32(uint32_t a, float v) { memcpy(g_mem + a, &v, 4); }
 static inline void WRF64(uint32_t a, double v) { memcpy(g_mem + a, &v, 8); }
+/* 30 Hz ticks crossed this frame (ClockOncePerFrame: [BEB238] = 60 Hz ticks this frame, [13439C] = tick count now):
+ * 1 per frame at 30 fps, 0 or 1 at 60 fps. gt_dec30: a frame-counted timer decremented by that, never below 0. */
+static inline uint32_t gt_ticks30(void) { uint32_t now = RD32(0x13439Cu); return (now >> 1) - ((now - RD32(0xBEB238u)) >> 1); }
+static inline uint32_t gt_dec30(uint32_t a) { uint32_t k = gt_ticks30(); return a > k ? a - k : 0; }
 
 /* MMIO-checked accesses (emitted for the XDK D3D section). Addresses >= 0xFD000000 are NV2A/APU registers. */
 uint32_t mmio_read(uint32_t a, int size);

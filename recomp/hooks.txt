@@ -35,3 +35,4 @@
 94690 MBOX_NewBlit
 946C0 MBOX_NewBlitSized
 87770 TowerSumnerUpdate
+667E0 damage_player

@@ -9,6 +9,7 @@
 uint8_t *g_mem;
 uint32_t g_frame_ms = 34;
 uint32_t gt_frame_need(void) { return g_frame_ms; }
+void gt_fncount(uint32_t va) { (void)va; }
 void gt_quit_game(void) {}
 float g_cull_x = 1, g_cull_far = 1;
 

@@ -126,6 +126,16 @@ static void anchor_event(uint32_t va, const char *path) {
 
 /* entry hook (recomp/hooks.txt): fires the armed anchor on this VA and arms the next one */
 void x86_hook(X86Context *c, uint32_t va) {
+    if (va == 0x667E0) {   /* damage_player(player, float amount, ...): GT_DMGLOG=1 logs each hit (60 fps research) */
+        static int on = -1;
+        if (on < 0) on = getenv("GT_DMGLOG") != NULL;
+        if (on) {
+            uint32_t ab = RD32(c->esp + 8); float amt; memcpy(&amt, &ab, 4);
+            LOG("[dmg] t=%.2f amount %.1f enemy %08X caller %X\n", sched_now_100ns() / 1e7, amt,
+                c->edi, RD32(c->esp));
+        }
+        return;
+    }
     if (va == 0x343E0) {   /* CritterUpdateHealthMeter(esi = critter): meter id short at +0x44C, health float +0x4B0.
                             * GT_BOSSHP=<n> (test cheat): clamp the health of critters with a meter (bosses) to n. */
         static double cap = -2;
@@ -631,7 +641,9 @@ void x86_hle(X86Context *c, uint32_t va) {
                 next = now + 5000000;
                 float v[3];
                 for (int k = 0; k < 3; k++) { uint32_t w = RD32(0xBB4F60u + 0x44 + k * 4); memcpy(&v[k], &w, 4); }
-                LOG("[pos] t=%.1f %.2f %.2f %.2f\n", now / 1e7, v[0], v[1], v[2]);
+                int ne = 0;   /* enemy slots (0xBD4D80, stride 0x394): non-zero state */
+                for (int k = 0; k < 64; k++) ne += RD32(0xBD4D80u + k * 0x394u) != 0;
+                LOG("[pos] t=%.1f %.2f %.2f %.2f enemies %d\n", now / 1e7, v[0], v[1], v[2], ne);
             }
         }
         {   /* GT_GOD=1 (test cheat): keep every living player at full health. Health = float at player + 0x3658

@@ -201,6 +201,33 @@ static void load_settings(void) {
 
 /* Frame-end wait (lifted 95FB0, see recomp/lift.py SOURCE_PATCHES): 34 ms = the original 29.4 fps cap, GT_FPS=60 -> 17 ms. */
 uint32_t g_frame_ms = 34;
+/* Debug lifts (lift.py with GT_LIFT_FNCOUNT=1) call this at every function entry. GT_FNCOUNT=<t1>,<t2> (guest
+ * seconds) counts the calls in that window and writes out/fncount.txt (va count, most called first). */
+void gt_fncount(uint32_t va) {
+    static uint32_t keys[1 << 16], vals[1 << 16];
+    static double t1 = -1, t2;
+    static int done;
+    if (t1 < 0) {
+        const char *e = getenv("GT_FNCOUNT");
+        if (!e || sscanf(e, "%lf,%lf", &t1, &t2) != 2) { t1 = 1e30; t2 = 0; }
+    }
+    if (done) return;
+    double now = sched_now_100ns() / 1e7;
+    if (now < t1) return;
+    if (now >= t2) {
+        done = 1;
+        FILE *f = fopen("out/fncount.txt", "w");
+        if (!f) return;
+        for (int i = 0; i < (1 << 16); i++) if (keys[i]) fprintf(f, "%X %u\n", keys[i], vals[i]);
+        fclose(f);
+        LOG("[fncount] written (%.1f..%.1f s)\n", t1, t2);
+        return;
+    }
+    uint32_t h = (va * 2654435761u) >> 16;
+    while (keys[h] && keys[h] != va) h = (h + 1) & 0xFFFF;
+    keys[h] = va;
+    vals[h]++;
+}
 uint32_t g_frame_ticks = 2;   /* 60 Hz game ticks per frame: 2 = 30 fps (the original), 1 = 60 fps (GT_FPS=60) */
 /* The game's clock (A9310): [14E5AC] = 60 Hz ticks = (GetTickCount - [1526EC]) * 3 / 50 while [1526E8] is set.
  * The frame end waits until GetTickCount - [148218] (the last frame's time) >= this: the next boundary of
@@ -212,11 +239,28 @@ static int getenv_noidle(void) {
 }
 uint32_t gt_frame_need(void) {
     uint32_t last = RD32(0x148218), t0 = RD32(0x1526EC);
-    if (!RD8(0x1526E8) || !t0) return g_frame_ms;
+    if (!RD8(0x1526E8) || !t0 || (int32_t)(last - t0) < 0) return g_frame_ms;   /* clock (re)started after the last frame */
     uint32_t k = (uint32_t)((uint64_t)(uint32_t)(last - t0) * 3 / 50);
     uint32_t due = t0 + (uint32_t)(((uint64_t)(k + g_frame_ticks) * 50 + 2) / 3);   /* first ms of tick k + n */
+    {   /* GT_FRAMELOG=1: frame intervals (ms between frame ends) and the wait, every 120 frames */
+        static int on = -1; static uint32_t prev_last, n, hist[8], maxw;
+        if (on < 0) on = getenv("GT_FRAMELOG") != NULL;
+        if (on && last != prev_last) {
+            uint32_t iv = last - prev_last, b8 = iv / 10 > 7 ? 7 : iv / 10;
+            hist[b8]++; prev_last = last;
+            if (iv >= 70 && iv < 100000) LOG("[frame] long frame %u ms (wait %u, t0 %u last %u)\n", iv, due - last, t0, last);
+            uint32_t now = (uint32_t)(sched_now_100ns() / 10000);
+            if (due > now && due - now > maxw) maxw = due - now;
+            if (++n == 120) {
+                LOG("[frame] intervals 0-9ms %u 10-19 %u 20-29 %u 30-39 %u 40-49 %u 50-59 %u 60-69 %u 70+ %u, max wait %u ms\n",
+                    hist[0], hist[1], hist[2], hist[3], hist[4], hist[5], hist[6], hist[7], maxw);
+                n = 0; maxw = 0; memset(hist, 0, sizeof hist);
+            }
+        }
+    }
     /* the game polls GetTickCount in a loop until then: sleep this guest thread instead (others run, and the
      * scheduler idles the host thread when nothing else is busy). GetTickCount = sched_now_100ns / 10000. */
+    if (due - last > 100) return g_frame_ms;   /* never wait long on a clock that jumped */
     if (!getenv_noidle()) sched_sleep_until((uint64_t)due * 10000);
     return due - last;
 }

@@ -392,6 +392,8 @@ class Emitter:
             return (f"/* HLE: {HLE.get(f.start, 'DSOUND internal')} */\n"
                     f"void {name}(X86Context *c) {{ x86_hle(c, 0x{f.start:X}u); }}")
         self.out.append(f"void {name}(X86Context *c) {{")
+        if os.environ.get("GT_LIFT_FNCOUNT") == "1":   # debug lifts only: per-function call counts (runtime gt_fncount)
+            self.emit(f"gt_fncount(0x{f.start:X}u);")
         if f.start in HOOKS:
             self.emit(f"x86_hook(c, 0x{f.start:X}u);  /* {HOOKS[f.start]} */")
         self.emit("uint32_t eax=c->eax, ecx=c->ecx, edx=c->edx, ebx=c->ebx, esp=c->esp, ebp=c->ebp, esi=c->esi, edi=c->edi;")
@@ -1221,6 +1223,13 @@ SOURCE_PATCHES = [
      "ST(0) = (ST(0)) + ((double)RDF32((uint32_t)(ecx + 0x5Cu)) * g_cull_far);", 1),
     (0x94A80, "ST(0) = (ST(0)) * ((double)RDF32((uint32_t)(ecx + 0x64u)));",
      "ST(0) = (ST(0)) * ((double)RDF32((uint32_t)(ecx + 0x64u)) * g_cull_x);", 1),
+    # Frame-counted timers: the game decrements these once per frame, i.e. at 30 Hz on the Xbox. At 60 fps they ran out
+    # twice as fast (enemies attacked twice as often; the player's timers halved). gt_dec30 (x86rt.h) subtracts the
+    # 30 Hz ticks crossed this frame instead: exactly 1 per frame at 30 fps (unchanged), 0 or 1 at 60 fps.
+    (0x3FB70, "L_0003FBC2:;\n    { uint32_t a = eax, r = (uint32_t)(a - 1);", "L_0003FBC2:;\n    { uint32_t a = eax, r = gt_dec30(a);", 1),   # do_enemy_attack: attack cooldown [enemy+2D4]
+    (0x6A3F0, "L_0006A73B:;\n    { uint32_t a = eax, r = (uint32_t)(a - 1);", "L_0006A73B:;\n    { uint32_t a = eax, r = gt_dec30(a);", 1),   # player update: [player+0]
+    (0x6A3F0, "L_0006AABB:;\n    { uint32_t a = eax, r = (uint32_t)(a - 1);", "L_0006AABB:;\n    { uint32_t a = eax, r = gt_dec30(a);", 1),   # player update: [player+A80]
+    (0x6A3F0, "L_0006AFDE:;\n    { uint32_t a = eax, r = (uint32_t)(a - 1);", "L_0006AFDE:;\n    { uint32_t a = eax, r = gt_dec30(a);", 1),   # player update: [player+A84]
 ]
 
 

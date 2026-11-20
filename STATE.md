@@ -479,8 +479,18 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   - Lifter: cvt(t)ss2si / fisttp emit x86 out-of-range results (ARM saturates); x86_cvtf2i_near rounds first.
   - Bug found: pad_sdl.c read `dir` uninitialised on Android -> clang deleted the init success path (looked like
     SDL_InitSubSystem failing with no error). Fixed.
-  - Phone (Galaxy S26 Ultra): intro movie plays with sound; gamepad self-test 35/35 on the phone. NOT yet seen on
-    the phone: touch overlay, title/menus/A1 gameplay, first-boot relaunch, background/resume, speed.
+  - Phone (Galaxy S26 Ultra), player-built APK (Windows payload in G:\gt-wintest2, then WSL rebuilds with the same
+    key: scratchpad pa.sh): unpack 2478 files on first start, first-boot relaunch via RestartActivity, title, menus,
+    name entry, character select, Tower hub, touch controls (taps via adb input), background + resume (swap chain
+    recreated), scripted A1 route (GT_INPUT=@input.txt in files/settings.ini) to 24 kills / stats screen at 29.4 fps
+    (anchor 1 at t=143.3 s; Windows 143.4 s). Gamepad self-test 35/35.
+  - Speed fix: hash_mem (texture hash, every bound texture once per frame) was a serial multiply chain = 52% of the
+    phone's CPU (14-17 fps); now XXH3 (NEON/SSE2): 29.4 fps. Also helps Windows/Linux.
+  - Touch overlay fixes: present pass scissors to 4:3 (reset to full screen); SV_Position read back wrong on
+    DXVK/Adreno in that pass, the shader uses uv * screen size.
+  - Profiling: manifest <profileable shell="true">; `adb shell simpleperf record --app com.eightgramlabs.gauntlet
+    --duration 10 -e cpu-clock -o /data/local/tmp/perf.data`, then `simpleperf report -i ... --sort symbol`.
+  - Not seen yet: a real controller on the phone, HD texture pack on Android, other GPUs (Mali).
     The user uses the phone: check the foreground app, stop the game after each test.
   - Dev loop (WSL): scratchpad ab.sh (rsync -> ~/gta/src, lift to ~/gta/lifted, tools/build_android.sh ~/gta/build
     --lifted ~/gta/lifted) -> debug APK; prun.sh <secs> install (install, start, screenshot, pull log, force-stop).

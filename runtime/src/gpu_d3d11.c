@@ -488,18 +488,14 @@ static int ready(void) {
 
 /* ---------------- hashing ---------------- */
 
+#define XXH_INLINE_ALL
+#include "xxhash.h"
 static uint64_t hash_mem(uint32_t a, uint32_t n, uint64_t h) {
     a &= 0x03FFFFFF;
     if (a + n > RAM_SIZE) n = a < RAM_SIZE ? RAM_SIZE - a : 0;
-    const uint8_t *p = g_mem + a;
-    uint32_t i = 0;
-    for (; i + 8 <= n; i += 8) {
-        uint64_t v; memcpy(&v, p + i, 8);
-        h = (h ^ v) * 0x9E3779B97F4A7C15ull;
-        h ^= h >> 29;
-    }
-    for (; i < n; i++) h = (h ^ p[i]) * 0x100000001B3ull;
-    return h;
+    /* every bound texture is hashed once per frame: XXH3 (SSE2 / NEON) instead of a serial multiply chain, which
+     * took half the frame on a phone */
+    return XXH3_64bits_withSeed(g_mem + a, n, h);
 }
 
 /* ---------------- textures ---------------- */
@@ -1554,8 +1550,9 @@ static const char *touch_ps_src =
     "cbuffer T : register(b0) { float4 c[24]; float4 col[24]; float4 n; };\n"
     "float4 main(float4 pos:SV_Position, float2 uv:TEXCOORD0) : SV_Target {\n"
     "  float4 o = 0;\n"
+    "  float2 px = uv * n.zw;\n"   /* SV_Position read back wrong here on DXVK/Adreno; uv spans the back buffer */
     "  for (int i = 0; i < (int)n.x; i++) {\n"
-    "    float d = length(pos.xy - c[i].xy);\n"
+    "    float d = length(px - c[i].xy);\n"
     "    float a = c[i].w > 0 ? saturate(1 - abs(d - c[i].z) / c[i].w) : saturate(c[i].z - d);\n"
     "    float k = col[i].a * a;\n"
     "    o = float4(col[i].rgb * k, k) + o * (1 - k);\n"
@@ -1569,11 +1566,14 @@ static void touch_draw(void) {
     if (failed) return;
     float sh[24][8];
     int n = touch_shapes(sh, 24, (int)bb_w, (int)bb_h);
+    static int logged;
+    if (!logged++) LOG("[touch] overlay: %d shapes on %ux%u\n", n, bb_w, bb_h);
     if (!n) return;
     if (!ps) {
         ID3DBlob *b = compile(touch_ps_src, "ps_5_0");
         if (!b || FAILED(ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(b), ID3D10Blob_GetBufferSize(b), NULL, &ps))) {
             failed = 1;
+            LOG("[touch] overlay shader failed\n");
             return;
         }
         ID3D10Blob_Release(b);
@@ -1597,10 +1597,14 @@ static void touch_draw(void) {
         memcpy(k[24 + i], sh[i] + 4, 4 * sizeof(float));
     }
     k[48][0] = (float)n;
+    k[48][2] = (float)bb_w;
+    k[48][3] = (float)bb_h;
     ID3D11DeviceContext_UpdateSubresource(ctx, (ID3D11Resource *)cb, 0, NULL, k, 0, 0);
     D3D11_VIEWPORT vp = {0, 0, (float)bb_w, (float)bb_h, 0, 1};
     ID3D11DeviceContext_OMSetRenderTargets(ctx, 1, &bb_rtv, NULL);
     ID3D11DeviceContext_RSSetViewports(ctx, 1, &vp);
+    D3D11_RECT all = {0, 0, (LONG)bb_w, (LONG)bb_h};   /* the present pass scissors to the 4:3 area */
+    ID3D11DeviceContext_RSSetScissorRects(ctx, 1, &all);
     ID3D11DeviceContext_OMSetBlendState(ctx, blend, NULL, 0xFFFFFFFF);
     ID3D11DeviceContext_IASetPrimitiveTopology(ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     ID3D11DeviceContext_IASetInputLayout(ctx, NULL);

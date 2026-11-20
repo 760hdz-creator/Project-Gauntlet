@@ -121,6 +121,8 @@ Uninstalling never touches it.
 
 ### Android
 
+![Android: the Tower with the on-screen controls (Galaxy S26 Ultra)](docs/images/android.jpg)
+
 The game also runs on Android phones and tablets (arm64, Android 13 or newer, Vulkan). The APK is built on your PC
 from your installed game, so it holds only your own copy:
 

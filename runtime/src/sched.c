@@ -123,7 +123,11 @@ GThread *sched_current(void) { return current; }
  * would starve the others. Polling points call this to yield after 1 ms of continuous running. */
 static uint64_t slice_start;
 void sched_maybe_yield(void) {
-    if (current && sched_now_100ns() - slice_start >= 10000) gt_sched_yield();
+    /* called on every MMIO read, kernel and HLE call: read the clock only every 32nd time (it was ~10% of the CPU
+     * on a phone in busy scenes) */
+    static uint32_t n;
+    if (!current || (++n & 31)) return;
+    if (sched_now_100ns() - slice_start >= 10000) gt_sched_yield();
 }
 uint32_t sched_thread_object(GThread *t) { return t->kthread; }
 

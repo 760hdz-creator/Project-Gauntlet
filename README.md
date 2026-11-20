@@ -25,8 +25,9 @@ Windows, with a Direct3D 11 renderer, HD texture packs, widescreen, 60 fps, MSAA
 - **HD texture packs.** It loads PCSX2-format replacement packs made for the PS2 version, such as the community
   *Gauntlet Dark Legacy HD 2.0* pack. The PS2 texture hashes are rebuilt from the Xbox data, so the pack works
   unchanged.
-- **60 fps (beta).** The Xbox game caps itself at 30 fps but times its game logic from the clock, so the cap can
-  be lifted without speeding the game up.
+- **60 fps.** The Xbox game caps itself at 30 fps but times its game logic from a 60 Hz clock. The port paces
+  frames on that clock, so it runs at a locked 60 fps by default without speeding the game up (30 fps is a launcher
+  option).
 - **Anti-aliasing and filtering.** Up to 8x MSAA, FXAA and 16x anisotropic filtering.
 - **Post-processing.** Optional sharpening (good with HD textures) and a CRT scanline look.
 - **Softer hit flash.** Characters hit in combat get a translucent white tint instead of a solid white
@@ -127,13 +128,15 @@ through quickly.
 | Multiplayer (up to 4 pads) | Working |
 | Sound, music, movies | Working |
 | HD textures, widescreen, MSAA, post-processing | Working |
-| 60 fps (beta) | Three realms played through to their bosses at 58-59 fps; game speed unchanged |
+| 60 fps (default) | Locked 60.0 fps on PC and phone; enemy attack timing, effects and walk speed match 30 fps |
 | Installer, launcher, updates, uninstall | Fresh install, update and uninstall tested; the in-launcher update download waits for the first release |
 
 Known gaps:
 - About 8% of the textures seen in a level stay original: the pack has no file for them (Xbox-only art such as
   the A/B button icons, and some effect animations).
-- With 60 fps on, loading screens finish about 2 seconds sooner. Report anything else that runs at the wrong speed.
+- At 60 fps loading screens finish sooner (the loader works per frame). Report anything that runs at the wrong
+  speed; the launcher's 60 fps box (settings.ini `GT_FPS=30`) switches back to the original 30.
+- High refresh rates (120/144 Hz) are not supported: much of the game logic counts whole 60 Hz ticks.
 - Not yet tested on a clean PC (Windows Sandbox) or with other characters past the first level at 60 fps.
 
 ## How it works

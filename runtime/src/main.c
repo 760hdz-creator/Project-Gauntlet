@@ -199,8 +199,9 @@ static void load_settings(void) {
 }
 #endif
 
-/* Frame-end wait (lifted 95FB0, see recomp/lift.py SOURCE_PATCHES): 34 ms = the original 29.4 fps cap, GT_FPS=60 -> 17 ms. */
-uint32_t g_frame_ms = 34;
+/* Frame-end wait (lifted 95FB0, see recomp/lift.py SOURCE_PATCHES): 60 fps by default, GT_FPS=30 = the original cap.
+ * g_frame_ms is only the fallback while the game clock is not running. */
+uint32_t g_frame_ms = 17;
 /* Debug lifts (lift.py with GT_LIFT_FNCOUNT=1) call this at every function entry. GT_FNCOUNT=<t1>,<t2> (guest
  * seconds) counts the calls in that window and writes out/fncount.txt (va count, most called first). */
 void gt_fncount(uint32_t va) {
@@ -228,7 +229,7 @@ void gt_fncount(uint32_t va) {
     keys[h] = va;
     vals[h]++;
 }
-uint32_t g_frame_ticks = 2;   /* 60 Hz game ticks per frame: 2 = 30 fps (the original), 1 = 60 fps (GT_FPS=60) */
+uint32_t g_frame_ticks = 1;   /* 60 Hz game ticks per frame: 1 = 60 fps (default), 2 = 30 fps (GT_FPS=30, the original) */
 /* The game's clock (A9310): [14E5AC] = 60 Hz ticks = (GetTickCount - [1526EC]) * 3 / 50 while [1526E8] is set.
  * The frame end waits until GetTickCount - [148218] (the last frame's time) >= this: the next boundary of
  * g_frame_ticks ticks, so each frame advances the game by exactly that many ticks (unless it ran long). */
@@ -302,7 +303,7 @@ int main(int argc, char **argv) {
     setenv("GT_SCALE", "3", 0);   /* phone defaults (settings.ini in the files folder overrides) */
     setenv("GT_MSAA", "2", 0);
 #endif
-    if (getenv("GT_FPS") && atoi(getenv("GT_FPS")) == 60) { g_frame_ms = 17; g_frame_ticks = 1; }
+    if (getenv("GT_FPS") && atoi(getenv("GT_FPS")) == 30) { g_frame_ms = 34; g_frame_ticks = 2; }
     if (getenv("GT_DRAWDIST")) {
         int d = atoi(getenv("GT_DRAWDIST"));
         if (d >= 100 && d <= 400) g_cull_far = d / 100.0f;

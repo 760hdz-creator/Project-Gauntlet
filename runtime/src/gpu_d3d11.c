@@ -527,9 +527,10 @@ static ID3D11ShaderResourceView *tex_srv(TexEntry *e) {
 }
 #define TEX_CACHE 4096
 static TexEntry tcache[TEX_CACHE];
-#define TEX_MEMO 1024
+#define TEX_MEMO 16384   /* per-frame memo: 1024 direct-mapped slots collided so often that ~150 MB were rehashed per frame */
 typedef struct { uint32_t frame, addr, fmt, pal_addr, pitch; TexEntry *e; } TexMemo;
 static TexMemo tmemo[TEX_MEMO];
+static uint32_t st_memo, st_hash, st_hashkb, st_miss, st_draws, st_verts;   /* texture lookups per stats period (fps log line) */
 
 /* swizzle offsets: interleave x and y bits (x first) while both dimensions have bits left */
 static void swizzle_tables(int w, int h, uint32_t *xs, uint32_t *ys) {
@@ -761,12 +762,15 @@ static ID3D11ShaderResourceView *get_texture(int i, int *rect, int *tw, int *th)
         pal_addr = (nv2a_dma_base(KREG((pw & 1) ? K_DMA_B : K_DMA_A)) + (pw & ~0x3Fu)) & 0x03FFFFFF;
     }
     /* per-frame memo: the same binding within one frame reuses the entry without rehashing */
-    uint32_t mslot = ((addr >> 6) ^ fmtw ^ (pal_addr >> 6) * 31u) & (TEX_MEMO - 1);
+    uint32_t mslot = ((addr * 0x9E3779B1u) ^ (fmtw * 0x85EBCA77u) ^ (pal_addr * 0xC2B2AE3Du) ^ pitch) >> 18 & (TEX_MEMO - 1);
     TexMemo *mm = &tmemo[mslot];
     if (mm->frame == frame_no && mm->addr == addr && mm->fmt == fmtw && mm->pal_addr == pal_addr && mm->pitch == pitch &&
-        mm->e && mm->e->srv && mm->e->addr == addr && mm->e->fmt == fmtw)
+        mm->e && mm->e->srv && mm->e->addr == addr && mm->e->fmt == fmtw) {
+        st_memo++;
         return tex_srv(mm->e);
+    }
     uint32_t nbytes = tex_bytes(f, w, h, levels, pitch);
+    st_hash++; st_hashkb += nbytes >> 10;
     uint64_t hsh = hash_mem(addr, nbytes, 0xCBF29CE484222325ull);
     if (pal_len) hsh = hash_mem(pal_addr, pal_len * 4, hsh);
     uint32_t slot = (uint32_t)((hsh ^ addr * 0x9E3779B1u ^ fmtw) % TEX_CACHE);
@@ -779,6 +783,7 @@ static ID3D11ShaderResourceView *get_texture(int i, int *rect, int *tw, int *th)
             return tex_srv(e);
         }
     }
+    st_miss++;
     /* miss: take an empty slot or the least recently used one in the probe window */
     TexEntry *v = &tcache[slot];
     for (int probe = 0; probe < 8; probe++) {
@@ -1162,6 +1167,7 @@ static void *ring_map(ID3D11Buffer *b, UINT *pos, UINT cap, UINT bytes) {
 }
 
 static void draw_impl(int topo, const KVertex *v, uint32_t nv, const uint32_t *idx, uint32_t ni) {
+    st_draws++; st_verts += nv;
     static int nodraw = -1;
     if (nodraw < 0) { const char *e = getenv("GT_NODRAW"); nodraw = e && *e && *e != '0'; }
     if (nodraw || !ready() || !ni) return;
@@ -1670,6 +1676,11 @@ static void flip_impl(uint32_t addr) {
     if (frame_no % 300 == 0) {
         static DWORD t0;
         DWORD t = GetTickCount();
+        int ne = 0;   /* live enemy slots (0xBD4D80, stride 0x394) */
+        for (int k = 0; k < 64; k++) ne += RD32(0xBD4D80u + k * 0x394u) != 0;
+        LOG("[gpu] per frame: draws %u verts %u, tex memo %u hashed %u (%u KB) new %u, enemies %d\n", st_draws / 300,
+            st_verts / 300, st_memo / 300, st_hash / 300, st_hashkb / 300, st_miss / 300, ne);
+        st_memo = st_hash = st_hashkb = st_miss = st_draws = st_verts = 0;
         LOG("[gpu] frame %u: %.1f fps (%d pixel shaders, %d render targets)\n", frame_no,
             t0 ? 300000.0 / (double)(t - t0) : 0.0, n_ps, n_rts);
         t0 = t;

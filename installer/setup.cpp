@@ -586,7 +586,7 @@ static void LoadSettings() {
     SetOn(ID_WIDESCREEN, IniGet(g_instDir, L"settings", L"GT_WIDESCREEN") != L"0");
     SetOn(ID_FXAA, IniGet(g_instDir, L"settings", L"GT_FXAA") == L"1");
     SetOn(ID_CRT, IniGet(g_instDir, L"settings", L"GT_CRT") == L"1");
-    SetOn(ID_FPS60, IniGet(g_instDir, L"settings", L"GT_FPS") == L"60");
+    SetOn(ID_FPS60, IniGet(g_instDir, L"settings", L"GT_FPS") != L"30");   // 60 fps is the default
     for (int i = 0; i < kNumCheats; i++) SetOn(ID_CH0 + i, !IniGet(g_instDir, L"settings", kCheats[i].key1).empty());
     std::wstring tex = IniGet(g_instDir, L"settings", L"GT_HDTEX"), folder = IniGet(g_instDir, L"launcher", L"HdFolder");
     if (folder.empty() && tex != L"0") folder = tex;
@@ -603,7 +603,7 @@ static void SaveSettings() {
     IniSet(g_instDir, L"settings", L"GT_WIDESCREEN", IsOn(ID_WIDESCREEN) ? L"" : L"0");
     IniSet(g_instDir, L"settings", L"GT_FXAA", IsOn(ID_FXAA) ? L"1" : L"");
     IniSet(g_instDir, L"settings", L"GT_CRT", IsOn(ID_CRT) ? L"1" : L"");
-    IniSet(g_instDir, L"settings", L"GT_FPS", IsOn(ID_FPS60) ? L"60" : L"");
+    IniSet(g_instDir, L"settings", L"GT_FPS", IsOn(ID_FPS60) ? L"" : L"30");
     for (int i = 0; i < kNumCheats; i++) {
         bool on = IsOn(ID_CH0 + i);
         IniSet(g_instDir, L"settings", kCheats[i].key1, on ? kCheats[i].val1 : L"");
@@ -1170,7 +1170,7 @@ static void CreateLauncherControls() {
     MakeCheck(L"Widescreen", ID_WIDESCREEN, x + 320, t + 296, 160);
     MakeCheck(L"FXAA (smooths edges)", ID_FXAA, x, t + 334, 300);
     MakeCheck(L"CRT scanlines", ID_CRT, x + 320, t + 334, 300);
-    MakeCheck(L"60 fps (beta)", ID_FPS60, x + 490, t + 296, 190);
+    MakeCheck(L"60 fps", ID_FPS60, x + 490, t + 296, 190);
     MakeCombo(ID_MONITOR, kMonitor, g_nMonitors, cx, t + 366, cw);
     MakeCombo(ID_SCALE, kScale, 6, cx, t + 402, cw);
     MakeCombo(ID_DRAWDIST, kDrawDist, 4, cx, t + 438, cw);

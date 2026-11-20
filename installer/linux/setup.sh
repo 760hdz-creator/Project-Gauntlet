@@ -179,7 +179,7 @@ if [ ! -f "$dir/settings.ini" ]; then
 ; Project Gauntlet settings (same keys as the Windows launcher). Remove the ; to use a line.
 [settings]
 ; GT_FULLSCREEN=1        ; start in borderless fullscreen (F11 or Alt+Enter toggles)
-; GT_FPS=60              ; 60 fps (default: the original 30)
+; GT_FPS=30              ; the original 30 fps (default: 60)
 ; GT_WIDESCREEN=0        ; original 4:3 picture
 ; GT_SCALE=4             ; render scale 1..8 (default: from the monitor height)
 ; GT_MSAA=4              ; anti-aliasing 1/2/4/8

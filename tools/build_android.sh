@@ -89,6 +89,17 @@ mkdir -p "$kitdir/include"
 cp "$build/libgtrt.a" "$kitdir/"
 cp "$root/recomp/include/"*.h "$kitdir/include/"
 cp "$apk/app/build/outputs/apk/release/app-release.apk" "$kitdir/template.apk"
+mkdir -p "$kitdir/licenses"
+cp "$deps/SDL-3.4.18/LICENSE.txt" "$kitdir/licenses/SDL3_LICENSE.txt"
+cp "$dxvk_src/LICENSE" "$kitdir/licenses/DXVK_Native_LICENSE.txt"
+cp "$deps/vkd3d/vkd3d-1.17/COPYING" "$kitdir/licenses/vkd3d_COPYING.txt"
+cp "$ndk/NOTICE.toolchain" "$kitdir/licenses/LLVM_libcxx_NOTICE.txt"
+cat > "$kitdir/licenses/README.txt" <<'EOF'
+Third-party parts of the Android template APK (lib/arm64-v8a): SDL3 3.4.18 (zlib, also its Java classes),
+DXVK Native 1.9.2b with the 8gram Labs patches (zlib), vkd3d-shader 1.17 (LGPL 2.1, unmodified, source:
+https://dl.winehq.org/vkd3d/source/vkd3d-1.17.tar.xz, dynamically linked), libc++_shared from the Android NDK
+(Apache 2.0 with LLVM exception), SDL_GameControllerDB (zlib, assets/gamecontrollerdb.txt).
+EOF
 echo "kit: $kitdir"
 
 [[ -n $lifted ]] || exit 0

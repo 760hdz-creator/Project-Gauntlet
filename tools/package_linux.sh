@@ -24,10 +24,16 @@ cp "$work/rt/libgtrt.a" "$kit/linux/"
 cp -r "$work/rt/lib" "$work/rt/include" "$kit/linux/"
 strip --strip-unneeded "$kit/linux/lib/"*.so* 2>/dev/null || true
 cp "$root/installer/res/icon.png" "$kit/linux/icon.png"
+# Android kit (no game code; setup.sh --android builds the APK from it): tools/build_android.sh stage 1
+akit=${GT_ANDROID_KIT:-}
+if [[ -z $akit ]]; then bash "$root/tools/build_android.sh" "$work/android" --version "$ver" >/dev/null; akit=$work/android/android-kit; fi
+mkdir -p "$kit/android"
+cp -r "$akit/libgtrt.a" "$akit/include" "$akit/template.apk" "$kit/android/"
+for f in "$akit/licenses/"*; do cp "$f" "$kit/licenses/android_$(basename "$f")"; done
 
 # kit files (git-tracked)
 ship=(VERSION README.md recomp/lift.py recomp/hle.txt recomp/hooks.txt recomp/seeds_extra.txt 'recomp/include/*'
-      tools/gt_build.py tools/pyrun.py tools/extract_xiso.py tools/match_pdb.py tools/pdb2.py tools/xbedis.py)
+      tools/gt_build.py tools/gt_android.py tools/pyrun.py tools/extract_xiso.py tools/match_pdb.py tools/pdb2.py tools/xbedis.py)
 cd "$root"
 for pat in "${ship[@]}"; do
     git ls-files -- "$pat" | while read -r f; do mkdir -p "$kit/$(dirname "$f")"; tr -d '\r' < "$f" > "$kit/$f"; done

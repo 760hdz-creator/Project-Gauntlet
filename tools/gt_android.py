@@ -399,7 +399,7 @@ def main():
         for fn in sorted(fs):
             p = os.path.join(d, fn)
             rel = os.path.relpath(p, game).replace(os.sep, "/")
-            if not rel.startswith(".") and "\n" not in rel:
+            if not rel.startswith(".") and "\n" not in rel and not rel.lower().endswith(".pdb"):   # symbols: PC only
                 files.append((rel, p, os.path.getsize(p)))
     files.sort()
     build_id = hashlib.sha256("\n".join(f"{s} {r}" for r, _, s in files).encode()).hexdigest()[:24]

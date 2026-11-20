@@ -24,7 +24,9 @@ GCDB_REV = "4e87e3c6c2574f49e1cdf8526b6f829b61e5ccb3"
 GCDB_URL = f"https://raw.githubusercontent.com/mdqinc/SDL_GameControllerDB/{GCDB_REV}/"
 SHIP = ["VERSION", "README.md", "recomp/lift.py", "recomp/hle.txt", "recomp/hooks.txt", "recomp/seeds_extra.txt",
         "recomp/include/*", "runtime/src/*", "tools/gt_build.py", "tools/extract_xiso.py", "tools/match_pdb.py",
-        "tools/pdb2.py", "tools/xbedis.py", "installer/install_toolchain.ps1"]
+        "tools/pdb2.py", "tools/xbedis.py", "tools/gt_android.py", "installer/install_toolchain.ps1"]
+# Android kit (tools/build_android.sh in WSL: android-kit/ = libgtrt.a, include/, template.apk, licenses/; no game code)
+ANDROID_KIT = Path(__import__("os").environ.get("GT_ANDROID_KIT", Path(__file__).resolve().parent.parent / "dist" / "_cache" / "android-kit"))
 FORBIDDEN = ["*.xbe", "*.iso", "*.pdb", "*.xbx", "*.wmv", "game/*", "*/lifted/*", "*pdb_match*", "*.ps2", "*.wad"]
 
 
@@ -72,7 +74,15 @@ def main():
                  out / "sdl3" / "gamecontrollerdb.txt")
     shutil.copy2(ROOT / "dist" / "_cache" / ("gcdb-" + GCDB_REV + "-LICENSE"),
                  out / "licenses" / "SDL_GameControllerDB_LICENSE.txt")
-    bad =[p for p in out.rglob("*") if p.is_file() and
+    if not (ANDROID_KIT / "template.apk").exists():
+        sys.exit(f"Android kit missing at {ANDROID_KIT} (tools/build_android.sh <dir> in WSL, then copy <dir>/android-kit)")
+    shutil.copytree(ANDROID_KIT, out / "android", ignore=shutil.ignore_patterns("licenses"))
+    for lic in (ANDROID_KIT / "licenses").glob("*"):
+        shutil.copy2(lic, out / "licenses" / ("android_" + lic.name))
+    with zipfile.ZipFile(ANDROID_KIT / "template.apk") as z:   # the template must hold no game code
+        if any(n.startswith("assets/game") or n.endswith("libmain.so") for n in z.namelist()):
+            sys.exit("android template.apk holds game code")
+    bad = [p for p in out.rglob("*") if p.is_file() and
            any(fnmatch.fnmatch(p.relative_to(out).as_posix().lower(), f.lower()) for f in FORBIDDEN)]
     if bad:
         sys.exit("FORBIDDEN files staged: " + ", ".join(map(str, bad[:10])))

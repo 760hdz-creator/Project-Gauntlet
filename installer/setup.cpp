@@ -44,12 +44,13 @@ static const wchar_t kShortcut[] = L"Project Gauntlet.lnk";
 enum { ID_ISO_EDIT = 200, ID_ISO_BROWSE, ID_DIR_EDIT, ID_DIR_BROWSE, ID_DESKTOP, ID_STARTMENU, ID_INSTALL, ID_PROGRESS,
        ID_STATUS, ID_HD_EDIT, ID_HD_BROWSE, ID_HD_USE, ID_HD_STATUS, ID_PLAY, ID_UPDATE, ID_UNINSTALL, ID_FULLSCREEN,
        ID_WIDESCREEN, ID_SCALE, ID_MSAA, ID_ANISO, ID_PADS, ID_SHARPEN, ID_FXAA, ID_CRT, ID_CONTROLS, ID_CTL_BACK,
-       ID_CTL_DEFAULTS, ID_FPS60, ID_HITFLASH, ID_LOGS, ID_CHEATS, ID_CH_BACK, ID_MONITOR, ID_DRAWDIST, ID_CH0 = 1900, ID_KEY0 = 2000, ID_PADM0 = 2100 };
+       ID_CTL_DEFAULTS, ID_FPS60, ID_HITFLASH, ID_LOGS, ID_CHEATS, ID_CH_BACK, ID_MONITOR, ID_DRAWDIST, ID_ANDROID, ID_CH0 = 1900, ID_KEY0 = 2000, ID_PADM0 = 2100 };
 #define WM_APP_STATUS (WM_APP + 1)
 #define WM_APP_PROGRESS (WM_APP + 2)
 #define WM_APP_DONE (WM_APP + 3)
 #define WM_APP_UPDATE (WM_APP + 4)   // launcher: update check finished (wp 1 = newer version in g_upd)
 #define WM_APP_UPDATING (WM_APP + 5) // launcher: wp 1 = new setup started (close), 0 = download failed
+#define WM_APP_ANDROID (WM_APP + 6)  // launcher: Android APK build finished (wp 1 = ok; g_error / g_apk)
 
 static HWND g_wnd, g_status, g_progress, g_iso, g_dir, g_install, g_hd, g_hdStatus, g_hdUse, g_updBtn;
 static bool g_updating, g_running, g_ok, g_launcher;
@@ -354,7 +355,9 @@ static int Uninstall(const std::wstring& dir) {
         DeleteFileW((KnownDir(FOLDERID_Desktop) + L"\\" + kShortcut).c_str());
         DeleteFileW((KnownDir(FOLDERID_Programs) + L"\\" + kShortcut).c_str());
     }
-    const wchar_t* parts[] = {L"build", L"game", L"python", L"recomp", L"runtime", L"tools", L"installer", L"licenses"};
+    const wchar_t* parts[] = {L"build", L"game", L"python", L"recomp", L"runtime", L"tools", L"installer", L"licenses",
+                              L"sdl3", L"android\\ndk", L"android\\template.apk", L"android\\include",
+                              L"android\\libgtrt.a"};   // keeps android\signing-key.json (a new APK installs over the old one)
     for (auto p : parts) {
         std::wstring from = dir + L"\\" + p + std::wstring(1, L'\0');
         SHFILEOPSTRUCTW op = {nullptr, FO_DELETE, from.c_str(), nullptr, FOF_NO_UI};
@@ -479,6 +482,33 @@ static void DownloadUpdate() {
         if (ok) { CloseHandle(pi.hThread); CloseHandle(pi.hProcess); }
     }
     PostMessageW(g_wnd, WM_APP_UPDATING, ok, 0);
+}
+
+// ---- Android: tools\gt_android.py builds an APK from this install (NDK downloaded once into <install>\android) ----
+static std::wstring g_apk;
+static HWND g_androidBtn;
+static void BuildAndroid() {
+    g_error.clear();
+    g_apk.clear();
+    std::wstring cmd = L"\"" + g_instDir + L"\\python\\python.exe\" -I \"" + g_instDir + L"\\tools\\gt_android.py\" --root \"" +
+                       g_instDir + L"\" --accept-ndk-license";
+    HANDLE log = CreateFileW((g_instDir + L"\\build\\android.log").c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+                             CREATE_ALWAYS, 0, nullptr);
+    std::wstring err;
+    int code = RunLines(cmd, g_instDir, [&](const std::string& l) {
+        DWORD w;
+        if (log != INVALID_HANDLE_VALUE) { WriteFile(log, l.data(), (DWORD)l.size(), &w, nullptr); WriteFile(log, "\r\n", 2, &w, nullptr); }
+        if (!l.compare(0, 3, "## ")) PostStatus(L"Android: " + Widen(l.substr(3)) + L"...");
+        else if (!l.compare(0, 7, "ERROR: ")) err = Widen(l.substr(7));
+        else if (!l.compare(0, 5, "APK: ")) g_apk = Widen(l.substr(5));
+        else if (!l.compare(0, 9, "compiled ") || !l.compare(0, 11, "downloaded ") || !l.compare(0, 9, "unpacked ")) {
+            PostStatus(L"Android: " + Widen(l) + L"...");
+        }
+    });
+    if (log != INVALID_HANDLE_VALUE) CloseHandle(log);
+    bool ok = code == 0 && !g_apk.empty() && Exists(g_apk);
+    if (!ok) g_error = (err.empty() ? L"The Android build failed." : err) + L"\n\nLog: " + g_instDir + L"\\build\\android.log";
+    PostMessageW(g_wnd, WM_APP_ANDROID, ok, 0);
 }
 
 // ---- launcher settings (settings.ini [settings], GT_* names the game reads) ----
@@ -979,6 +1009,19 @@ static bool LauncherCommand(HWND h, int id, int code) {
     case ID_UNINSTALL:
         if (Uninstall(g_instDir) == 0) DestroyWindow(h);
         return true;
+    case ID_ANDROID:
+        if (g_worker.joinable()) return true;
+        if (MessageBoxW(h, L"Build Project Gauntlet for Android phones (arm64, Android 13 or newer, Vulkan)?\n\n"
+                           L"Your installed game is compiled for Android on this PC and packed with your game files into "
+                           L"one APK (about 1 GB). The first build downloads Google's Android NDK (about 700 MB; "
+                           L"Android SDK license: developer.android.com/studio/terms) and takes 10-20 minutes.\n\n"
+                           L"Then copy the APK to your phone and open it there to install it.",
+                        kAppName, MB_OKCANCEL | MB_ICONQUESTION) != IDOK)
+            return true;
+        EnableWindow(g_androidBtn, FALSE);
+        SetWindowTextW(g_status, L"Android: starting...");
+        g_worker = std::thread(BuildAndroid);
+        return true;
     case ID_HD_BROWSE: BrowseHd(); return true;
     case ID_HD_EDIT:
         if (code == EN_KILLFOCUS) { UpdateHdStatus(); SaveSettings(); }
@@ -1052,6 +1095,17 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         } else {
             SetWindowTextW(g_status, lp ? (std::wstring(L"Up to date (version ") + kVersion + L").").c_str()
                                         : L"Could not check for updates (offline?).");
+        }
+        return 0;
+    case WM_APP_ANDROID:
+        if (g_worker.joinable()) g_worker.join();
+        EnableWindow(g_androidBtn, TRUE);
+        if (wp) {
+            SetWindowTextW(g_status, (L"Android APK ready: " + g_apk).c_str());
+            ShellExecuteW(h, nullptr, L"explorer.exe", (L"/select,\"" + g_apk + L"\"").c_str(), nullptr, SW_SHOWNORMAL);
+        } else {
+            SetWindowTextW(g_status, L"The Android build failed.");
+            MessageBoxW(h, g_error.c_str(), kAppName, MB_OK | MB_ICONERROR);
         }
         return 0;
     case WM_APP_UPDATING:
@@ -1133,6 +1187,8 @@ static void CreateLauncherControls() {
     Make(L"BUTTON", L"Uninstall", BS_PUSHBUTTON | WS_TABSTOP, ID_UNINSTALL, x + fw - 170, t + 764, 170, 32, g_smallFont);
     Make(L"BUTTON", L"Controls", BS_PUSHBUTTON | WS_TABSTOP, ID_CONTROLS, x + fw - 200, t + 130, 200, 30, g_smallFont);
     Make(L"BUTTON", L"Cheats", BS_PUSHBUTTON | WS_TABSTOP, ID_CHEATS, x + fw - 200, t + 164, 200, 30, g_smallFont);
+    g_androidBtn = Make(L"BUTTON", L"Android...", BS_PUSHBUTTON | WS_TABSTOP, ID_ANDROID, x + fw - 200, t + 198, 200, 30,
+                        g_smallFont);
     LoadSettings();
     // controls page, hidden until Controls is clicked
     auto children = [] {

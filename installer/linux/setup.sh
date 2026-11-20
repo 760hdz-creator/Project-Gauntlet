@@ -5,6 +5,8 @@
 #   ./setup.sh [--iso <image.iso>] [--dir <folder>] [--hd <texture pack folder>] [--play]
 #   ./setup.sh --update --dir <folder> [--play]     rebuild with this package's kit (no disc needed)
 #   ./setup.sh --uninstall [--dir <folder>]         remove the game (keeps <folder>/out: saves, settings, log)
+#   ./setup.sh --android [--dir <folder>]           build the Android APK from the installed game (downloads the
+#                                                   Android NDK once, about 700 MB) -> <folder>/ProjectGauntlet-*-Android.apk
 #
 # Default folder: ${XDG_DATA_HOME:-~/.local/share}/project-gauntlet. Needs glibc 2.38+, python3 (3.9+), clang or gcc, and a
 # Vulkan driver (libvulkan.so.1). With zenity installed and no terminal, it asks with dialogs and shows progress.
@@ -21,6 +23,7 @@ while [ $# -gt 0 ]; do
     --uninstall) mode=uninstall; shift ;;
     --play) play=1; shift ;;
     --no-gui) nogui=1; shift ;;
+    --android) mode=android; shift ;;
     -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
     esac
@@ -61,6 +64,19 @@ EOF
     command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$apps" 2>/dev/null || true
 }
 
+if [ $mode = android ]; then
+    [ -f "$dir/kit/tools/gt_android.py" ] || die "No Project Gauntlet install in $dir (install it first)."
+    if [ $gui = 1 ]; then
+        zenity --question --title "$title" --width 480 --text "Build Project Gauntlet for Android phones (arm64, Android 13+)?\n\nYour installed game is compiled for Android on this PC and packed with your game files into one APK (about 1 GB). The first build downloads Google's Android NDK (about 700 MB; Android SDK license: developer.android.com/studio/terms)." 2>/dev/null || exit 0
+    else
+        echo "Building the Android APK. The first build downloads Google's Android NDK (about 700 MB; Android SDK license: https://developer.android.com/studio/terms)."
+    fi
+    python3 -I "$dir/kit/tools/gt_android.py" --root "$dir" --accept-ndk-license 2>&1 | tee "$dir/build/android.log" | grep --line-buffered -E "^(## |ERROR|APK: )" || true
+    apk=$(sed -n "s/^APK: //p" "$dir/build/android.log" | tail -1)
+    [ -n "$apk" ] && [ -f "$apk" ] || die "The Android build failed. $(grep -m1 -A8 "^ERROR: " "$dir/build/android.log" | cut -c1-300)"
+    say "Android APK ready: $apk\nCopy it to your phone and open it there to install."
+    exit 0
+fi
 if [ $mode = uninstall ]; then
     [ -f "$dir/gauntlet.sh" ] || die "No Project Gauntlet install in $dir"
     if [ $gui = 1 ]; then

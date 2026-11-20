@@ -4,10 +4,15 @@
 
 **Gauntlet: Dark Legacy (Xbox) rebuilt as a native game for Windows, Linux and Android.**
 
+[![Download the latest release](https://img.shields.io/badge/Download-latest%20release-2ea44f?style=for-the-badge&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPGRlZnM%2BPGNsaXBQYXRoIGlkPSJsIj48cmVjdCB3aWR0aD0iMTIiIGhlaWdodD0iMjQiLz48L2NsaXBQYXRoPjxjbGlwUGF0aCBpZD0iciI%2BPHJlY3QgeD0iMTIiIHdpZHRoPSIxMiIgaGVpZ2h0PSIyNCIvPjwvY2xpcFBhdGg%2BPC9kZWZzPjxwYXRoIGQ9Ik03IDUgMi41IDEyIDcgMTkiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2Y1ZjdmYSIgc3Ryb2tlLXdpZHRoPSIyLjYiIHN0cm9rZS1saW5lam9pbj0ibWl0ZXIiLz48cGF0aCBkPSJNMTcgNSAyMS41IDEyIDE3IDE5IiBmaWxsPSJub25lIiBzdHJva2U9IiNmYjYxMTYiIHN0cm9rZS13aWR0aD0iMi42IiBzdHJva2UtbGluZWpvaW49Im1pdGVyIi8%2BPGcgZmlsbD0ibm9uZSIgc3Ryb2tlLXdpZHRoPSIyLjMiPjxnIGNsaXAtcGF0aD0idXJsKCNsKSIgc3Ryb2tlPSIjZjVmN2ZhIj48Y2lyY2xlIGN4PSIxMiIgY3k9IjgiIHI9IjMuMyIvPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTYiIHI9IjMuNiIvPjwvZz48ZyBjbGlwLXBhdGg9InVybCgjcikiIHN0cm9rZT0iI2ZiNjExNiI%2BPGNpcmNsZSBjeD0iMTIiIGN5PSI4IiByPSIzLjMiLz48Y2lyY2xlIGN4PSIxMiIgY3k9IjE2IiByPSIzLjYiLz48L2c%2BPC9nPjwvc3ZnPgo=)](https://git.8gramlabs.com/8gramlabs/Project-Gauntlet/releases/latest)
+<a href="https://git.8gramlabs.com/8gramlabs/Project-Gauntlet/releases/latest"><img src="https://git.8gramlabs.com/badge/8gramlabs/Project-Gauntlet/downloads.svg" alt="Downloads"></a>
+
+[![HD textures (optional)](https://img.shields.io/badge/HD%20textures-optional%20pack-1e88e5?style=for-the-badge&logo=googledrive&logoColor=white)](https://drive.google.com/file/d/1QN0gNCpc3p0pgFx2zmSlYOAePSD4DEMY/view?usp=drive_link)
+
 [![Windows](https://img.shields.io/badge/Windows-supported-0078D6?logo=windows&logoColor=white)](#install)
 [![Linux](https://img.shields.io/badge/Linux-supported-FCC624?logo=linux&logoColor=black)](#linux)
 [![Android](https://img.shields.io/badge/Android-supported-3DDC84?logo=android&logoColor=white)](#android)
-[![Version](https://img.shields.io/badge/version-0.2.0-8A2BE2)](https://git.8gramlabs.com/8gramlabs/Project-Gauntlet/releases)
+[![Latest release](https://img.shields.io/gitea/v/release/8gramlabs/Project-Gauntlet?gitea_url=https%3A%2F%2Fgit.8gramlabs.com&color=8A2BE2&label=latest)](https://git.8gramlabs.com/8gramlabs/Project-Gauntlet/releases/latest)
 [![60 fps](https://img.shields.io/badge/60_fps-default-success)](#features)
 [![Multiplayer](https://img.shields.io/badge/multiplayer-local_4_players-blue)](#features)
 [![Netplay](https://img.shields.io/badge/online_netplay-coming_soon-lightgrey)](#features)
@@ -125,6 +130,26 @@ from your installed game, so it holds only your own copy:
 3. Copy `ProjectGauntlet-<version>-Android.apk` (about 1 GB) from the install folder to the phone and open it there.
    Android asks you to allow installs from that app once.
 4. The first start unpacks the game files, which takes about a minute.
+
+#### How the Android build works
+
+There is no APK to download, on purpose: an APK of the game would contain the game. Your PC makes it instead,
+from the copy you installed:
+
+1. **Your PC already has the game.** The Windows or Linux install translated your disc's game code to C and
+   compiled it for your PC.
+2. **Android... compiles that same code for phones.** The launcher downloads Google's Android NDK (the official
+   compiler for Android) once into the install folder, and compiles the translated game code for arm64 phones.
+3. **It fills in an empty app.** Each release ships an Android app "shell" (`android/template.apk`) with the
+   runtime pieces only: SDL3, the Vulkan graphics layer (DXVK and vkd3d) and the Java start-up code. It contains no
+   game code and no game files. Your PC adds the compiled game and your game files to it.
+4. **It signs the app with your own key.** Android only installs signed apps, so your PC makes a signing key the
+   first time (`android\signing-key.json`) and signs every build with it.
+5. **You install it.** The finished `ProjectGauntlet-<version>-Android.apk` stays in your install folder. Copy it to
+   your phone and open it. On the first start the app unpacks the game files into its own storage.
+
+Nothing leaves your PC except the APK you copy to your own phone. Rebuild the APK after updating the PC install to
+get the new version on your phone.
 
 On-screen controls show until a controller is connected: a stick that appears where your left thumb lands,
 A/B/X/Y, White/Black, the triggers in the top corners and BACK/START at the top. The game runs at 60 fps on recent

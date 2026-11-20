@@ -511,6 +511,35 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   ~/gta/build/android-kit) and dist\ProjectGauntlet-Linux-0.2.0.tar.gz (13 MB, pk.sh now clones main). Linux check:
   setup.sh --update, then --android (ANDROID_NDK_HOME set) -> signed APK; A1 loads after the update.
 
+- 2026-11-19 FPS POLISH (branch fps, fast-forwarded into main; local, unpushed). User asked: solid 60 everywhere, 60 fps
+  glitches, 60 by default, above 60.
+  - Pacing: 95FB0 frame wait = gt_frame_need() (main.c): ms to the next boundary of the game's 60 Hz tick clock
+    ([14E5AC] = (GetTickCount - [1526EC]) * 3 / 50): exactly 1 tick per frame = 60.0 fps, 2 = 30.0 (was 17/34 ms:
+    58.8 / 29.4 fps with tick jitter). Guards: clock not running or restarted -> g_frame_ms; waits > 100 ms refused.
+    The wait sleeps the fiber (sched_sleep_until); sched_run idles 250 us when a round took < 40 us (GT_NOIDLE=1 off).
+    Windows CPU 168 -> 107 s per 150 s at 60 fps; phone 150% -> 92% of a core (A1).
+  - 60 by default: no GT_FPS = 60, GT_FPS=30 = original; launcher "60 fps" box (unchecked writes GT_FPS=30), Linux
+    settings.ini template, README updated.
+  - Glitch hunt: debug lift GT_LIFT_FNCOUNT=1 + GT_FNCOUNT=t1,t2 (out/fncount.txt) found per-frame functions; idle A1
+    routes (out/input_idle30/60.txt) + GT_DMGLOG (damage_player hook 667E0) + GT_POSLOG enemy count. Frame-counted
+    timers moved to 30 Hz ticks (gt_dec30 in x86rt.h, SOURCE_PATCHES): do_enemy_attack cooldown [enemy+2D4], player
+    update timers [player+0], [+A80], [+A84]. Result: every enemy attacks every ~0.6 s at 30 and 60; arrival time
+    after level start equal; level loads ~5 s faster at 60 (loader per frame, harmless). Title events still ~1.8 s
+    earlier at 60 (cosmetic).
+  - Above 60: not done. 147 functions read the integer ticks [BEB238] (62 the float dt); 0-tick frames take the
+    dt = 1/30 fallback in ClockOncePerFrame. Separate project (told the user).
+  - Speed: texture memo 1024 -> 16384 slots with a mixed index (A1: 4500 rehashes / 148 MB per frame -> 190 / 2 MB);
+    sched_maybe_yield reads the clock every 32nd call (clock reads were ~10% of the phone's CPU). fps log line now
+    has draws/verts/texture/enemy counts per frame.
+  - Phone at 60 (scale 3, MSAA 2): A1 and A6 hold 60 for minutes; in some scenes (A6 later, realm hub) ~7500 draw
+    calls of ~4.6 verts per frame, CPU 185%, fps slides 60 -> 29 while the battery warms (no thermal status): next
+    step = batch small draws with identical state in gpu_d3d11.c draw_impl (and/or lower phone defaults).
+  - Windows post-death Tower: main thread runs 100-450 ms without yielding at times (pre-existing, also in the old
+    build; not seen on the phone run): not investigated.
+  - Rebuilt after the merge: dist\ProjectGauntlet-Setup-0.2.0.exe, dist\ProjectGauntlet-Linux-0.2.0.tar.gz,
+    dist\_cache\android-kit. Checked: Windows payload build + Android APK (apksigner OK) + boot; Linux update + A1
+    at 30 (WSL llvmpipe too slow for 60 routes); phone installs and boots the Windows-built APK.
+
 ## Next
 0. User is playtesting. When they say it is good: move tag v0.2.0 to HEAD (force-push the tag to both remotes; ask
    first), rebuild dist\ProjectGauntlet-Setup-0.2.0.exe (+ the Linux tarball: both already rebuilt 2026-11-19 with

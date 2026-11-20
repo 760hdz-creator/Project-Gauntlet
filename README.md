@@ -2,10 +2,19 @@
 
 # Project Gauntlet
 
-**Gauntlet: Dark Legacy (Xbox) rebuilt as a native Windows game.**
+**Gauntlet: Dark Legacy (Xbox) rebuilt as a native game for Windows, Linux and Android.**
 
-A static recompilation by 8gram Labs: the original x86 game code is translated to C and compiled for 64-bit
-Windows, with a Direct3D 11 renderer, HD texture packs, widescreen, 60 fps, MSAA and a launcher.
+[![Windows](https://img.shields.io/badge/Windows-supported-0078D6?logo=windows&logoColor=white)](#install)
+[![Linux](https://img.shields.io/badge/Linux-supported-FCC624?logo=linux&logoColor=black)](#linux)
+[![Android](https://img.shields.io/badge/Android-supported-3DDC84?logo=android&logoColor=white)](#android)
+[![Version](https://img.shields.io/badge/version-0.2.0-8A2BE2)](https://git.8gramlabs.com/8gramlabs/Project-Gauntlet/releases)
+[![60 fps](https://img.shields.io/badge/60_fps-default-success)](#features)
+[![Multiplayer](https://img.shields.io/badge/multiplayer-local_4_players-blue)](#features)
+[![Netplay](https://img.shields.io/badge/online_netplay-coming_soon-lightgrey)](#features)
+
+A static recompilation by 8gram Labs: the original x86 game code is translated to C and compiled natively for
+64-bit Windows (Direct3D 11), Linux (Vulkan through DXVK) and Android phones (arm64, Vulkan), with HD texture packs,
+widescreen, a locked 60 fps, MSAA, support for almost any controller and a launcher.
 
 ![Launcher](docs/images/launcher.jpg)
 
@@ -16,15 +25,19 @@ Windows, with a Direct3D 11 renderer, HD texture packs, widescreen, 60 fps, MSAA
 
 ## Features
 
-- **Native 64-bit Windows build.** No emulator: every function of `Default.xbe` is lifted to C and compiled with
-  clang-cl.
+- **Native builds, no emulator.** Every function of `Default.xbe` is lifted to C and compiled for the machine it
+  runs on: 64-bit Windows, Linux (x86-64) and Android (arm64).
+- **Linux.** A native build with the same renderer on Vulkan (DXVK), SDL3 for window, sound and controllers, and a
+  `setup.sh` installer with menu entry, updates and uninstall.
+- **Android.** Your PC turns your installed game into an APK for your phone or tablet. It has on-screen touch
+  controls and supports Bluetooth and USB controllers. See [Android](#android).
 - **High resolution.** The game renders at a multiple of 640x480, sized to your monitor by default (up to 6x,
   3840x2880).
 - **Widescreen (hor+).** It fills 16:9, 21:9 and wider screens with more of the level. The HUD stays centered and
   the menus are pillarboxed.
-- **HD texture packs.** It loads PCSX2-format replacement packs made for the PS2 version, such as the community
-  *Gauntlet Dark Legacy HD 2.0* pack. The PS2 texture hashes are rebuilt from the Xbox data, so the pack works
-  unchanged.
+- **HD texture packs (optional).** It loads PCSX2-format replacement packs made for the PS2 version, such as the
+  community *Gauntlet Dark Legacy HD 2.0* pack ([download](https://drive.google.com/file/d/1QN0gNCpc3p0pgFx2zmSlYOAePSD4DEMY/view?usp=drive_link)). The PS2 texture hashes are
+  rebuilt from the Xbox data, so the pack works unchanged.
 - **60 fps.** The Xbox game caps itself at 30 fps but times its game logic from a 60 Hz clock. The port paces
   frames on that clock, so it runs at a locked 60 fps by default without speeding the game up (30 fps is a launcher
   option).
@@ -33,10 +46,13 @@ Windows, with a Direct3D 11 renderer, HD texture packs, widescreen, 60 fps, MSAA
 - **Softer hit flash.** Characters hit in combat get a translucent white tint instead of a solid white
   silhouette (Soft by default; Full shows the original look, Off removes it).
 - **Borderless fullscreen.** Toggle with F11 or Alt+Enter.
-- **Up to 4 players** on almost any controller: Xbox, PlayStation 3/4/5, Switch Pro and Joy-Con, Steam Controller, 8BitDo and other USB or Bluetooth pads (SDL3).
+- **Local multiplayer for up to 4 players** on almost any controller: Xbox, PlayStation 3/4/5, Switch Pro and
+  Joy-Con, Steam Controller, 8BitDo and other USB or Bluetooth pads (SDL3). **Online netplay is coming soon**; for
+  now, multiplayer is local (same screen).
 - **Remappable controls.** Rebind keyboard keys and gamepad buttons in the launcher.
 - **Launcher.** Play, check for updates, change display and control settings, pick an HD pack, uninstall.
-- **Auto-update.** A new release is downloaded and the game is rebuilt from your installed data, without the disc.
+- **Auto-update.** A new release is downloaded and the game is rebuilt from your installed data, without the disc
+  (Windows and Linux).
 
 ## HD textures: before and after
 
@@ -63,6 +79,8 @@ Left: the original textures. Right: the HD pack. The yellow box on each full vie
 
 ## Install
 
+### Windows
+
 1. Download `ProjectGauntlet-Setup-<version>.exe` from the
    [releases](https://git.8gramlabs.com/8gramlabs/Project-Gauntlet/releases) page.
 2. Run the setup. Choose your disc image (`.iso` / `.xiso`), an install folder and, optionally, an HD texture pack
@@ -74,10 +92,26 @@ Left: the original textures. Right: the HD pack. The yellow box on each full vie
 
 ![Installer](docs/images/installer.jpg)
 
-### HD texture pack
+### Linux
 
-Get a PCSX2 replacement pack for the PS2 version (serial `SLUS-20047`). Then pick its folder, for example
-`...\SLUS-20047\replacements`, in the setup or the launcher. The pack is used where it is and is not copied.
+1. Download `ProjectGauntlet-Linux-<version>.tar.gz` from the
+   [releases](https://git.8gramlabs.com/8gramlabs/Project-Gauntlet/releases) page and unpack it.
+2. You need glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39, Linux Mint 22, Arch, SteamOS 3.6 or newer),
+   Python 3.9 or newer, clang or gcc, and a Vulkan driver:
+   - Ubuntu/Debian: `sudo apt install python3 clang libvulkan1 mesa-vulkan-drivers`
+   - Fedora: `sudo dnf install python3 clang vulkan-loader mesa-vulkan-drivers`
+   - Arch: `sudo pacman -S python clang vulkan-icd-loader` (plus your GPU's Vulkan driver)
+3. Run `./setup.sh --iso "<your disc image>"` (add `--hd <pack folder>` for the HD textures). Double-clicking
+   `setup.sh` asks for the image with a dialog. The build takes a few minutes.
+4. Start **Project Gauntlet** from your applications menu. Settings live in `settings.ini` in the install folder
+   (default `~/.local/share/project-gauntlet`). See `README-Linux.txt` in the package for the details.
+
+### HD texture pack (optional)
+
+The game looks and plays fine without it. To use HD textures, download the community *Gauntlet Dark Legacy HD 2.0*
+pack ([Google Drive](https://drive.google.com/file/d/1QN0gNCpc3p0pgFx2zmSlYOAePSD4DEMY/view?usp=drive_link)) or any other PCSX2 replacement pack for the PS2 version (serial
+`SLUS-20047`). Unpack it, then pick its folder, for example `...\SLUS-20047\replacements`, in the setup or the
+launcher (Linux: `--hd <folder>` or `GT_HDTEX` in `settings.ini`). The pack is used where it is and is not copied.
 Uninstalling never touches it.
 
 ### Android
@@ -92,7 +126,10 @@ from your installed game, so it holds only your own copy:
    Android asks you to allow installs from that app once.
 4. The first start unpacks the game files, which takes about a minute.
 
-On-screen controls show until a controller is connected. Each PC signs its APKs with its own key, stored in
+On-screen controls show until a controller is connected: a stick that appears where your left thumb lands,
+A/B/X/Y, White/Black, the triggers in the top corners and BACK/START at the top. The game runs at 60 fps on recent
+phones (tested on a Galaxy S26 Ultra); very busy scenes can dip, and `GT_SCALE=2` in `settings.ini` in the app's
+folder (`Android/data/com.eightgramlabs.gauntlet/files`) lowers the load. Each PC signs its APKs with its own key, stored in
 `android\signing-key.json` in the install folder. Keep that file: a new build only installs over the old one when it
 is signed with the same key.
 
@@ -125,11 +162,14 @@ through quickly.
 | All eight realms and their bosses | Working (including the Lich, the Yeti and the Plague Fiend) |
 | Locked worlds and the final boss | Working: Skorne, Garm and the ending movie |
 | Secret levels S1 to S9 | All load and return to their parent level |
-| Multiplayer (up to 4 pads) | Working |
+| Local multiplayer (up to 4 pads) | Working |
+| Online netplay | Coming soon |
+| Linux | Working: install, update, uninstall, play (Ubuntu 24.04, Debian 13) |
+| Android | Working: built from your PC install, touch controls, controllers, 60 fps on a Galaxy S26 Ultra |
 | Sound, music, movies | Working |
 | HD textures, widescreen, MSAA, post-processing | Working |
 | 60 fps (default) | Locked 60.0 fps on PC and phone; enemy attack timing, effects and walk speed match 30 fps |
-| Installer, launcher, updates, uninstall | Fresh install, update and uninstall tested; the in-launcher update download waits for the first release |
+| Installer, launcher, updates, uninstall | Fresh install, update and uninstall tested on Windows and Linux |
 
 Known gaps:
 - About 8% of the textures seen in a level stay original: the pack has no file for them (Xbox-only art such as
@@ -137,7 +177,10 @@ Known gaps:
 - At 60 fps loading screens finish sooner (the loader works per frame). Report anything that runs at the wrong
   speed; the launcher's 60 fps box (settings.ini `GT_FPS=30`) switches back to the original 30.
 - High refresh rates (120/144 Hz) are not supported: much of the game logic counts whole 60 Hz ticks.
-- Not yet tested on a clean PC (Windows Sandbox) or with other characters past the first level at 60 fps.
+- Android: very busy scenes can drop below 60 fps on phones (many small draw calls); only tested on a Snapdragon
+  (Adreno) phone so far.
+- Real PlayStation and Xbox controllers have only been tested through simulated pads so far.
+- Not yet tested on a clean PC (Windows Sandbox).
 
 ## How it works
 
@@ -149,6 +192,10 @@ Known gaps:
   out as 256-byte GS memory blocks, and the CLUT hash from the palette. When a pack has several palette variants of
   one texture, it picks the closest by image comparison. Loaded HD textures stay within a VRAM budget.
 - `installer/` holds the setup and launcher (one Win32 exe), and `tools/gt_build.py` runs the on-PC build.
+- Linux and Android use the same runtime and renderer through a small Win32 compatibility layer
+  (`runtime/src/linux/`), DXVK Native (Direct3D 11 on Vulkan), vkd3d-shader and SDL3. `tools/gt_android.py` builds
+  the APK on the player's PC: it compiles the translated code with the Android NDK, adds it and the player's game
+  files to a template APK that holds no game code, and signs it with a key made on that PC.
 
 See [docs/design.md](docs/design.md) and [docs/installer.md](docs/installer.md) for the details.
 
@@ -169,4 +216,4 @@ This is the same build the installer runs: extract, check the disc, translate, c
 
 Gauntlet: Dark Legacy is a trademark of its owners. This project is not affiliated with or endorsed by them. It
 contains no game code, data or assets. You need your own copy of the game. HD texture packs are third-party
-community work and are not distributed here.
+community work and are not part of this project; the link above points to a community upload.

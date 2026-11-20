@@ -97,6 +97,11 @@ _Noreturn void linux_relaunch(void);
  * the window created on the main stack (SDL calls into Java there; Java checks the stack pointer) */
 void android_start(void);
 void android_relaunch(void);   /* restart the activity (Java), then the process ends */
-void android_pad_poll(void);
-extern volatile int g_android_relaunch;   /* set by a guest thread; sched_run restarts from the main stack */   /* pad_sdl.c: SDL gamepad calls on the main stack (sched_run) */
+void android_pad_poll(void);   /* pad_sdl.c: SDL gamepad calls on the main stack (sched_run) */
+extern volatile int g_android_relaunch;   /* set by a guest thread; sched_run restarts from the main stack */
+/* on-screen controls (linux/touch.c) */
+void touch_event(uint32_t type, uint64_t id, float nx, float ny);
+void touch_set_pad_present(int present);
+void touch_merge(HostState *s);
+int touch_shapes(float (*out)[8], int max, int w, int h);
 #endif

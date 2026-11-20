@@ -1548,6 +1548,72 @@ static void screenshot_tex(ID3D11Texture2D *src) {
     ID3D11Texture2D_Release(st);
 }
 
+#ifdef __ANDROID__
+/* on-screen controls (linux/touch.c): discs and rings, one full-screen pass blended over the frame */
+static const char *touch_ps_src =
+    "cbuffer T : register(b0) { float4 c[24]; float4 col[24]; float4 n; };\n"
+    "float4 main(float4 pos:SV_Position, float2 uv:TEXCOORD0) : SV_Target {\n"
+    "  float4 o = 0;\n"
+    "  for (int i = 0; i < (int)n.x; i++) {\n"
+    "    float d = length(pos.xy - c[i].xy);\n"
+    "    float a = c[i].w > 0 ? saturate(1 - abs(d - c[i].z) / c[i].w) : saturate(c[i].z - d);\n"
+    "    float k = col[i].a * a;\n"
+    "    o = float4(col[i].rgb * k, k) + o * (1 - k);\n"
+    "  }\n"
+    "  return o; }\n";
+static void touch_draw(void) {
+    static ID3D11PixelShader *ps;
+    static ID3D11Buffer *cb;
+    static ID3D11BlendState *blend;
+    static int failed;
+    if (failed) return;
+    float sh[24][8];
+    int n = touch_shapes(sh, 24, (int)bb_w, (int)bb_h);
+    if (!n) return;
+    if (!ps) {
+        ID3DBlob *b = compile(touch_ps_src, "ps_5_0");
+        if (!b || FAILED(ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(b), ID3D10Blob_GetBufferSize(b), NULL, &ps))) {
+            failed = 1;
+            return;
+        }
+        ID3D10Blob_Release(b);
+        D3D11_BUFFER_DESC bd = {sizeof(float) * 4 * 49, D3D11_USAGE_DEFAULT, D3D11_BIND_CONSTANT_BUFFER, 0, 0, 0};
+        ID3D11Device_CreateBuffer(dev, &bd, NULL, &cb);
+        D3D11_BLEND_DESC bl = {0};
+        bl.RenderTarget[0].BlendEnable = TRUE;
+        bl.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
+        bl.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+        bl.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+        bl.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+        bl.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+        bl.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+        bl.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+        ID3D11Device_CreateBlendState(dev, &bl, &blend);
+    }
+    float k[49][4];
+    memset(k, 0, sizeof k);
+    for (int i = 0; i < n; i++) {
+        memcpy(k[i], sh[i], 4 * sizeof(float));
+        memcpy(k[24 + i], sh[i] + 4, 4 * sizeof(float));
+    }
+    k[48][0] = (float)n;
+    ID3D11DeviceContext_UpdateSubresource(ctx, (ID3D11Resource *)cb, 0, NULL, k, 0, 0);
+    D3D11_VIEWPORT vp = {0, 0, (float)bb_w, (float)bb_h, 0, 1};
+    ID3D11DeviceContext_OMSetRenderTargets(ctx, 1, &bb_rtv, NULL);
+    ID3D11DeviceContext_RSSetViewports(ctx, 1, &vp);
+    ID3D11DeviceContext_OMSetBlendState(ctx, blend, NULL, 0xFFFFFFFF);
+    ID3D11DeviceContext_IASetPrimitiveTopology(ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ID3D11DeviceContext_IASetInputLayout(ctx, NULL);
+    ID3D11DeviceContext_VSSetShader(ctx, blit_vs, NULL, 0);
+    ID3D11DeviceContext_PSSetShader(ctx, ps, NULL, 0);
+    ID3D11DeviceContext_PSSetConstantBuffers(ctx, 0, 1, &cb);
+    ID3D11DeviceContext_Draw(ctx, 3, 0);
+    ID3D11DeviceContext_OMSetBlendState(ctx, NULL, NULL, 0xFFFFFFFF);
+}
+#else
+static void touch_draw(void) {}
+#endif
+
 static void flip_impl(uint32_t addr) {
     if (!ready()) return;
     frame_no++;
@@ -1594,6 +1660,7 @@ static void flip_impl(uint32_t addr) {
             ID3D11Texture2D_Release(bb);
         }
     }
+    touch_draw();
     IDXGISwapChain_Present(swap, 0, 0);
     last_flip_tick = GetTickCount();
     if (frame_no % 300 == 0) {
@@ -1650,6 +1717,7 @@ static void vblank_impl(void) {
     ID3D11DeviceContext_Unmap(ctx, (ID3D11Resource *)ov_tex, 0);
     float ow = (float)(o.ow ? o.ow : 640), oh = (float)(o.oh ? o.oh : 480);
     present_srv(ov_srv, (float)o.ox, (float)o.oy, ow, oh);
+    touch_draw();
     IDXGISwapChain_Present(swap, 0, 0);
     static int shot_every = -1;
     if (shot_every < 0) { const char *e = getenv("GT_SHOT"); shot_every = e ? atoi(e) : 0; }

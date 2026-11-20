@@ -433,6 +433,14 @@ static uint16_t want[MAX_PADS][2];
 static int want_new[MAX_PADS];
 int pad_sdl_init(void) { return 1; }   /* the real init runs in the first android_pad_poll */
 uint32_t pad_sdl_get_state(uint32_t port, HostState *s) {
+    if (port == 0) {   /* player 1 is always there: the on-screen controls (linux/touch.c) */
+        static uint32_t packet;
+        if (cache_ok[0]) *s = cache[0];
+        else memset(s, 0, sizeof *s);
+        touch_merge(s);
+        s->dwPacketNumber = ++packet;
+        return 0;
+    }
     if (port >= MAX_PADS || !cache_ok[port]) return 1167;
     *s = cache[port];
     return 0;
@@ -458,5 +466,6 @@ void android_pad_poll(void) {
         cache[k] = h;
         if (want_new[k]) { want_new[k] = 0; set_live(k, want[k]); }
     }
+    touch_set_pad_present(cache_ok[0]);
 }
 #endif

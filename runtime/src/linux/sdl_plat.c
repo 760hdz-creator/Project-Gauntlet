@@ -4,6 +4,9 @@
 #include <windows.h>
 #include <SDL3/SDL.h>
 #include <unistd.h>
+#ifdef __ANDROID__
+void touch_event(uint32_t type, uint64_t id, float nx, float ny);   /* touch.c */
+#endif
 
 #define LOG(...) do { fprintf(stderr, __VA_ARGS__); fflush(stderr); } while (0)
 
@@ -94,6 +97,14 @@ void linux_pump_events(void) {
             if (e.key.key == SDLK_ESCAPE) { LOG("[gpu] escape\n"); ExitProcess(0); }
             if (e.key.key == SDLK_F11 || (e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT))) toggle_fullscreen();
             break;
+#ifdef __ANDROID__
+        case SDL_EVENT_FINGER_DOWN:
+        case SDL_EVENT_FINGER_MOTION:
+        case SDL_EVENT_FINGER_UP:
+        case SDL_EVENT_FINGER_CANCELED:
+            touch_event(e.type, (uint64_t)e.tfinger.fingerID, e.tfinger.x, e.tfinger.y);
+            break;
+#endif
         default: break;
         }
     }

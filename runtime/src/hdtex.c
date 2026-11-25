@@ -137,7 +137,7 @@ static uint32_t *decode_png(const char *path, UINT *pw, UINT *ph) {
     return px;   /* stb_image allocates with malloc: free() as for the WIC path */
 }
 #else
-static __declspec(thread) IWICImagingFactory *wic;   /* one factory per loader thread */
+static _Thread_local IWICImagingFactory *wic;   /* one factory per loader thread */
 
 /* PNG -> RGBA8 (R in the low byte) with GS alpha (0x80 = 1.0) scaled to 8 bits. NULL on failure. */
 static uint32_t *decode_png(const char *path, UINT *pw, UINT *ph) {

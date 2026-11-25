@@ -5,7 +5,8 @@ usage: python -I tools/gt_build.py --root <install dir> [--iso <image.iso>] [--j
   2. check game/Default.xbe is the supported USA release (SHA-256)
   3. tools/match_pdb.py (game/shell3D.pdb from the disc) -> <root>/build/pdb_match.tsv
   4. recomp/lift.py -> <root>/build/lifted/*.c
-  5. clang-cl (LLVM) + MSVC/Windows SDK libraries (VS Build Tools, found with vswhere) -> <root>/gauntlet.exe
+  5. Windows: llvm-mingw (tools/bootstrap.py: pinned, SHA-256 checked, downloaded once to <root>/toolchain, ~190 MB)
+     compiles the lifted code and the runtime -> <root>/gauntlet.exe
      Linux: clang (or gcc) compiles the lifted code and links it with the prebuilt runtime from the Linux package
      (linux/libgtrt.a + linux/lib/*.so: SDL3, DXVK Native, vkd3d-shader) -> <root>/gauntlet, rpath $ORIGIN/lib
 Progress lines start with "## ", a failure with "ERROR: " (the installer shows both). Logs go to stdout.
@@ -16,17 +17,21 @@ import concurrent.futures
 import hashlib
 import os
 import shutil
+import stat
 import subprocess
 import sys
+import time
+import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 KIT = os.path.dirname(HERE)  # the build kit: recomp/, runtime/, tools/
 XBE_SHA256 = "0982be1a51a045af36032dc98e3a3af37fcadae9f103d1443bd480700a4c6e76"
-LIFT_FLAGS = ["/nologo", "/c", "/O2", "-Wno-unused-label", "-Wno-unused-variable", "-Wno-unused-but-set-variable",
-              "-Wno-parentheses-equality", "-Wno-everything"]
-LIBS = ["libcmt.lib", "kernel32.lib", "winmm.lib", "user32.lib", "gdi32.lib", "d3d11.lib", "dxgi.lib", "dxguid.lib",
-        "d3dcompiler.lib", "shlwapi.lib", "winhttp.lib", "shell32.lib", "advapi32.lib", "ole32.lib",
-        "windowscodecs.lib"]
+# Lifted code and runtime type-pun guest memory and rely on x86 integer/float semantics: no strict aliasing, signed
+# overflow wraps, no FMA fusion (float results must match the guest bit for bit).
+CFLAGS = ["-O2", "-g", "-w", "-fno-strict-aliasing", "-fwrapv", "-ffp-contract=off", "-fno-math-errno",
+          "-D_CRT_SECURE_NO_WARNINGS"]
+LIBS = ["-l" + lib for lib in ("winmm", "user32", "gdi32", "d3d11", "dxgi", "dxguid", "d3dcompiler", "shlwapi", "winhttp",
+                               "shell32", "advapi32", "ole32", "windowscodecs")]
 
 
 def step(msg):
@@ -36,6 +41,30 @@ def step(msg):
 def fail(msg):
     print("ERROR: " + msg, flush=True)
     sys.exit(1)
+
+
+def retry(what, f):
+    """f(), tried for 20 s: OneDrive, virus scanners and indexers hold files for a moment."""
+    for i in range(40):
+        try:
+            return f()
+        except PermissionError as e:
+            if i == 39:
+                fail(f"{what}: {e.strerror or e}: {e.filename}")
+            time.sleep(0.5)
+
+
+def rmtree(path):
+    """Delete a folder. OneDrive marks its folders read-only, and Windows does not remove a read-only folder."""
+    def once():
+        if not os.path.isdir(path):
+            return
+        for d, dirs, files in os.walk(path):
+            for p in [d] + [os.path.join(d, f) for f in files]:
+                if not os.path.islink(p) and not os.stat(p).st_mode & stat.S_IWRITE:
+                    os.chmod(p, os.stat(p).st_mode | stat.S_IWRITE)
+        shutil.rmtree(path)
+    retry("Could not delete an old folder (close programs that use it and try again)", once)
 
 
 def sha256(path):
@@ -52,34 +81,6 @@ def run(cmd, env=None, cwd=None):
     return r.returncode, r.stdout
 
 
-def msvc_env():
-    """Environment of vcvars64.bat (VS Build Tools) with LLVM in front of PATH."""
-    vswhere = os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
-                           r"Microsoft Visual Studio\Installer\vswhere.exe")
-    if not os.path.exists(vswhere):
-        fail("Visual Studio Build Tools are not installed (vswhere.exe missing). Run the installer's build tools step.")
-    code, out = run([vswhere, "-latest", "-products", "*", "-requires",
-                     "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"])
-    vs = out.strip().splitlines()[0] if out.strip() else ""
-    vcvars = os.path.join(vs, r"VC\Auxiliary\Build\vcvars64.bat")
-    if not vs or not os.path.exists(vcvars):
-        fail("No Visual Studio C++ build tools found (VC.Tools.x86.x64).")
-    code, out = run(f'cmd /s /c ""{vcvars}" >nul && set"')
-    if code:
-        fail("vcvars64.bat failed:\n" + out[-2000:])
-    env = {}
-    for line in out.splitlines():
-        k, sep, v = line.partition("=")
-        if sep:
-            env[k.upper()] = v
-    llvm = os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), r"LLVM\bin")
-    if not os.path.exists(os.path.join(llvm, "clang-cl.exe")):
-        fail("LLVM (clang-cl) is not installed in " + llvm)
-    env["PATH"] = llvm + ";" + env.get("PATH", "")
-    env["GT_LLVM"] = llvm
-    return env
-
-
 def linux_cc():
     """clang preferred (what the Windows build uses), gcc as fallback; CC overrides."""
     for cc in [os.environ.get("CC"), "clang", "gcc", "cc"]:
@@ -88,7 +89,7 @@ def linux_cc():
     fail("No C compiler found. Install clang (or gcc) with your package manager, e.g. sudo apt install clang")
 
 
-def compile_all_linux(jobs, cc, items):
+def compile_all(jobs, cc, items):
     def one(it):
         src, obj, flags = it
         return src, run([cc] + flags + ["-c", src, "-o", obj])
@@ -112,11 +113,10 @@ def build_linux(root, build, lifted, jobs):
               ["-O2", "-fno-strict-aliasing", "-w", "-I" + os.path.join(rt, "include")])
              for f in sorted(os.listdir(lifted)) if f.endswith(".c")]
     step(f"Compiling {len(items)} files with {jobs} jobs (several minutes)")
-    compile_all_linux(jobs, cc, items)
+    compile_all(jobs, cc, items)
     step("Linking gauntlet")
     lib = os.path.join(root, "lib")
-    if os.path.isdir(lib):
-        shutil.rmtree(lib)
+    rmtree(lib)
     shutil.copytree(os.path.join(rt, "lib"), lib)
     shutil.copy2(os.path.join(rt, "gamecontrollerdb.txt"), root)   # controller mappings (pad_sdl.c)
     libs = [os.path.join(lib, f) for f in sorted(os.listdir(lib)) if ".so" in f]
@@ -126,20 +126,6 @@ def build_linux(root, build, lifted, jobs):
     if code:
         fail("link failed:\n" + out[-3000:])
     os.replace(exe + ".new", exe)
-
-
-def compile_all(jobs, env, items):
-    """items: (source, object, flags). Compiles in parallel; stops at the first failure."""
-    def one(it):
-        src, obj, flags = it
-        return src, run([os.path.join(env["GT_LLVM"], "clang-cl.exe")] + flags + [src, "/Fo" + obj], env=env)
-    done = 0
-    with concurrent.futures.ThreadPoolExecutor(jobs) as ex:
-        for src, (code, out) in ex.map(one, items):
-            done += 1
-            if code:
-                fail(f"compile failed: {os.path.basename(src)}\n{out[-3000:]}")
-            print(f"compiled {os.path.basename(src)} ({done}/{len(items)})", flush=True)
 
 
 def main():
@@ -158,8 +144,7 @@ def main():
 
     if a.iso:
         step("Extracting the disc image")
-        if os.path.isdir(game):
-            shutil.rmtree(game)
+        rmtree(game)
         code, out = run(py + [os.path.join(HERE, "extract_xiso.py"), a.iso, game])
         print(out[-2000:], flush=True)
         if code:
@@ -180,8 +165,7 @@ def main():
 
     lifted = os.path.join(build, "lifted")
     step("Translating the game code (a few minutes)")
-    if os.path.isdir(lifted):
-        shutil.rmtree(lifted)
+    rmtree(lifted)
     code, out = run(py + [os.path.join(KIT, "recomp", "lift.py"), xbe, lifted, "--seeds", tsv])
     print(out[-1500:], flush=True)
     if code:
@@ -194,40 +178,45 @@ def main():
         step("Done")
         return
 
-    step("Finding the C compiler")
-    env = msvc_env()
+    os.environ["GT_TOOLCHAIN_DIR"] = os.path.join(root, "toolchain")   # read when bootstrap.py is imported
+    sys.path.insert(0, HERE)
+    import bootstrap  # noqa: E402
+    step("Getting the compiler (llvm-mingw, first install only: ~190 MB)")
+    bootstrap.main()
+    cc = os.path.join(bootstrap.llvm_mingw_dir(), "bin", "clang.exe")
     inc = os.path.join(KIT, "recomp", "include")
     src_dir = os.path.join(KIT, "runtime", "src")
     rt_obj = os.path.join(build, "rt")
-    os.makedirs(rt_obj, exist_ok=True)
-    items = [(os.path.join(lifted, f), os.path.join(lifted, f[:-2] + ".obj"), LIFT_FLAGS + ["/I" + inc])
+    rmtree(rt_obj)
+    os.makedirs(rt_obj)
+    items = [(os.path.join(lifted, f), os.path.join(lifted, f[:-2] + ".o"), CFLAGS + ["-I" + inc])
              for f in sorted(os.listdir(lifted)) if f.endswith(".c")]
-    items += [(os.path.join(src_dir, f), os.path.join(rt_obj, f[:-2] + ".obj"),
-               ["/nologo", "/c", "/O2", "/I" + inc, "/I" + src_dir, "-D_CRT_SECURE_NO_WARNINGS",
-                f'-DGT_VERSION="{a.version}"'])
+    items += [(os.path.join(src_dir, f), os.path.join(rt_obj, f[:-2] + ".o"),
+               CFLAGS + ["-I" + inc, "-I" + src_dir, f'-DGT_VERSION="{a.version}"'])
               for f in sorted(os.listdir(src_dir)) if f.endswith(".c")]
-    step(f"Compiling {len(items)} files with {jobs} jobs (several minutes)")
-    compile_all(jobs, env, items)
+    step(f"Compiling {len(items)} files with {jobs} jobs (1 to 3 minutes)")
+    compile_all(jobs, cc, items)
 
     step("Linking gauntlet.exe")
-    objs = [it[1] for it in items]
-    rsp = os.path.join(build, "link.rsp")
-    with open(rsp, "w") as f:
-        f.write("\n".join(f'"{o}"' for o in objs))
     exe = os.path.join(root, "gauntlet.exe")
-    code, out = run([os.path.join(env["GT_LLVM"], "lld-link.exe"), "/nologo", "/OUT:" + exe + ".new", "/SUBSYSTEM:WINDOWS", "/ENTRY:mainCRTStartup", "@" + rsp] + LIBS, env=env)
+    # -static: only system DLLs are imported; -mwindows: no console window
+    code, out = run([cc, "-static", "-g", "-mwindows", "-o", exe + ".new"] + [it[1] for it in items] + LIBS)
     if code:
         fail("link failed:\n" + out[-3000:])
-    os.replace(exe + ".new", exe)
+    retry("Could not replace gauntlet.exe. Close the game and try again", lambda: os.replace(exe + ".new", exe))
     # SDL3.dll + gamecontrollerdb.txt: every controller SDL knows (pad_sdl.c; without them, XInput pads only)
     for f in ("SDL3.dll", "gamecontrollerdb.txt"):
         src = os.path.join(KIT, "sdl3", f)
         if os.path.exists(src):
-            shutil.copy2(src, os.path.join(root, f))
+            retry("Could not replace " + f, lambda: shutil.copy2(src, os.path.join(root, f)))
     with open(os.path.join(root, "build", "version.txt"), "w") as f:
         f.write(a.version + "\n")
     step("Done")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:   # the installer shows the ERROR line; the log keeps the details
+        traceback.print_exc()
+        fail(f"{type(e).__name__}: {e}")

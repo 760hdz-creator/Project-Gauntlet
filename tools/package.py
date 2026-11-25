@@ -24,10 +24,11 @@ GCDB_REV = "4e87e3c6c2574f49e1cdf8526b6f829b61e5ccb3"
 GCDB_URL = f"https://raw.githubusercontent.com/mdqinc/SDL_GameControllerDB/{GCDB_REV}/"
 SHIP = ["VERSION", "README.md", "recomp/lift.py", "recomp/hle.txt", "recomp/hooks.txt", "recomp/seeds_extra.txt",
         "recomp/include/*", "runtime/src/*", "tools/gt_build.py", "tools/extract_xiso.py", "tools/match_pdb.py",
-        "tools/pdb2.py", "tools/xbedis.py", "tools/gt_android.py", "installer/install_toolchain.ps1"]
+        "tools/pdb2.py", "tools/xbedis.py", "tools/gt_android.py", "tools/bootstrap.py"]
 # Android kit (tools/build_android.sh in WSL: android-kit/ = libgtrt.a, include/, template.apk, licenses/; no game code)
 ANDROID_KIT = Path(__import__("os").environ.get("GT_ANDROID_KIT", Path(__file__).resolve().parent.parent / "dist" / "_cache" / "android-kit"))
-FORBIDDEN = ["*.xbe", "*.iso", "*.pdb", "*.xbx", "*.wmv", "game/*", "*/lifted/*", "*pdb_match*", "*.ps2", "*.wad"]
+FORBIDDEN = ["*.xbe", "*.iso", "*.pdb", "*.xbx", "*.wmv", "game/*", "*/lifted/*", "*pdb_match*", "*.ps2", "*.wad",
+             "toolchain/*"]
 
 
 def main():

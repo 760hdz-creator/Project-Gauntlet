@@ -16,3 +16,4 @@ out/
 assets/pdb_match.tsv
 dist/
 installer/setup.res
+/toolchain/

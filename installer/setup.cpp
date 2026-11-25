@@ -1,9 +1,9 @@
 // Project Gauntlet installer. Ships no game code or data: it installs the build kit (our lifter, runtime source,
 // embedded Python) and builds the game on this PC from the player's own Gauntlet: Dark Legacy (Xbox, USA) disc image.
 //   1. unpack the embedded payload.zip (System32\tar.exe) into the install folder
-//   2. install the build tools if missing (installer\install_toolchain.ps1, elevated: VS Build Tools C++, LLVM)
-//   3. python\python.exe -I tools\gt_build.py --root <dir> --iso <image> (extract, check, lift, compile)
-//   4. shortcuts, per-user record HKCU\Software\ProjectGauntlet, uninstall entry
+//   2. python\python.exe -I tools\gt_build.py --root <dir> --iso <image> (extract, check, lift, compile;
+//      it downloads the llvm-mingw compiler to <dir>\toolchain once: no administrator rights)
+//   3. shortcuts, per-user record HKCU\Software\ProjectGauntlet, uninstall entry
 // Over an existing install it offers an update: new kit + rebuild from the installed game data (no disc needed).
 // Command line: --update [--dir <folder>] (what the game's updater runs), --uninstall [--dir <folder>],
 // --iso <image> [--dir <folder>] [--hd <pack folder>] (full install, starts at once: testing).
@@ -212,35 +212,6 @@ template <class F> static int RunLines(std::wstring cmd, const std::wstring& cwd
     return (int)code;
 }
 
-// ---- build tools ----
-static bool HaveToolchain() {
-    wchar_t pf86[MAX_PATH], pf[MAX_PATH];
-    ExpandEnvironmentStringsW(L"%ProgramFiles(x86)%", pf86, MAX_PATH);
-    ExpandEnvironmentStringsW(L"%ProgramFiles%", pf, MAX_PATH);
-    if (!Exists(std::wstring(pf) + L"\\LLVM\\bin\\clang-cl.exe")) return false;
-    std::wstring vswhere = std::wstring(pf86) + L"\\Microsoft Visual Studio\\Installer\\vswhere.exe";
-    if (!Exists(vswhere)) return false;
-    std::string out;
-    RunLines(L"\"" + vswhere + L"\" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 "
-             L"-property installationPath", L"", [&](const std::string& l) { out += l; });
-    return !out.empty();
-}
-static bool InstallToolchain(const std::wstring& dir) {
-    PostStatus(L"Installing the build tools (Visual Studio Build Tools C++ and LLVM, about 3 GB from Microsoft and "
-               L"llvm.org). Accept the administrator prompt; this takes 5-20 minutes.");
-    std::wstring args = L"-NoProfile -ExecutionPolicy Bypass -File \"" + dir + L"\\installer\\install_toolchain.ps1\"";
-    SHELLEXECUTEINFOW se = {sizeof se};
-    se.fMask = SEE_MASK_NOCLOSEPROCESS;
-    se.lpVerb = L"runas";
-    se.lpFile = L"powershell.exe";
-    se.lpParameters = args.c_str();
-    se.nShow = SW_SHOWMINNOACTIVE;
-    if (!ShellExecuteExW(&se) || !se.hProcess) return false;
-    WaitForSingleObject(se.hProcess, INFINITE);
-    CloseHandle(se.hProcess);
-    return HaveToolchain();
-}
-
 // ---- install / update worker ----
 static bool Unpack(const std::wstring& dir) {
     PostStatus(L"Copying files...");
@@ -265,15 +236,10 @@ static void Work(std::wstring iso, std::wstring dir, std::wstring hd, bool deskt
     PostProgress(2);
     if (!Unpack(dir)) { g_error = L"Could not write the files to " + dir + L"."; return done(false); }
     PostProgress(5);
-    if (!HaveToolchain() && !InstallToolchain(dir)) {
-        g_error = L"The build tools are not installed. Log: %TEMP%\\ProjectGauntlet_toolchain.log";
-        return done(false);
-    }
-    PostProgress(10);
     std::wstring cmd = L"\"" + dir + L"\\python\\python.exe\" -I \"" + dir + L"\\tools\\gt_build.py\" --root \"" + dir +
                        L"\" --version " + kVersion;
     if (!update) cmd += L" --iso \"" + iso + L"\"";
-    // weights: extract 10-30, match 30-38, lift 38-55, compile 55-97
+    // weights: extract 10-30, match 30-38, lift 38-50, compiler download 50-55, compile 55-97
     int base = 10;
     HANDLE log = CreateFileW((dir + L"\\build\\setup.log").c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr,
                              CREATE_ALWAYS, 0, nullptr);
@@ -293,6 +259,7 @@ static void Work(std::wstring iso, std::wstring dir, std::wstring hd, bool deskt
             else if (s.rfind(L"Checking", 0) == 0) base = 30;
             else if (s.rfind(L"Matching", 0) == 0) base = 32;
             else if (s.rfind(L"Translating", 0) == 0) base = 40;
+            else if (s.rfind(L"Getting", 0) == 0) base = 50;
             else if (s.rfind(L"Compiling", 0) == 0) base = 55;
             else if (s.rfind(L"Linking", 0) == 0) base = 97;
             PostProgress(base);
@@ -355,7 +322,7 @@ static int Uninstall(const std::wstring& dir) {
         DeleteFileW((KnownDir(FOLDERID_Desktop) + L"\\" + kShortcut).c_str());
         DeleteFileW((KnownDir(FOLDERID_Programs) + L"\\" + kShortcut).c_str());
     }
-    const wchar_t* parts[] = {L"build", L"game", L"python", L"recomp", L"runtime", L"tools", L"installer", L"licenses",
+    const wchar_t* parts[] = {L"build", L"game", L"python", L"recomp", L"runtime", L"tools", L"installer", L"licenses", L"toolchain",
                               L"sdl3", L"android\\ndk", L"android\\template.apk", L"android\\include",
                               L"android\\libgtrt.a"};   // keeps android\signing-key.json (a new APK installs over the old one)
     for (auto p : parts) {
@@ -1324,8 +1291,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         SendMessageW(g_progress, PBM_SETBARCOLOR, 0, RGB(110, 220, 40));
         SendMessageW(g_progress, PBM_SETBKCOLOR, 0, RGB(18, 26, 18));
         g_status = Make(L"STATIC", update ? L"Ready to update. Your game data, settings and saves are kept."
-                                           : L"First install: the build tools (about 3 GB) are installed if missing, then "
-                                             L"the game is built (10-20 minutes).",
+                                           : L"First install: the compiler (190 MB) is downloaded, then the game is built "
+                                             L"(a few minutes).",
                         SS_LEFT, ID_STATUS, x, t + 615, fw, 80);
         ShowWindow(g_wnd, SW_SHOW);
         if (g_iso && !isoArg.empty()) SetWindowTextW(g_iso, isoArg.c_str());

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Linux package: dist/ProjectGauntlet-Linux-<VERSION>.tar.gz (run on Linux / WSL from a checkout of this repo).
+# Linux package: dist/ProjectGauntlet-Linux-x64-<VERSION>.tar.gz (run on Linux / WSL from a checkout of this repo).
 #
 #   tools/package_linux.sh [out dir]      (default: dist/)
 #
@@ -11,7 +11,7 @@ set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 out=${1:-$root/dist}
 ver=$(tr -d '\r\n' < "$root/VERSION")
-name=ProjectGauntlet-Linux-$ver
+name=ProjectGauntlet-Linux-x64-$ver
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 stage=$work/$name
@@ -40,7 +40,9 @@ for pat in "${ship[@]}"; do
 done
 cp "$root/installer/linux/setup.sh" "$stage/setup.sh"
 cp "$root/installer/linux/README-Linux.txt" "$stage/README-Linux.txt"
-chmod +x "$stage/setup.sh"
+tr -d '\r' < "$root/installer/linux/ProjectGauntlet" > "$stage/ProjectGauntlet"   # RecompLauncher starts this
+tr -d '\r' < "$root/recomplauncher.json" > "$stage/recomplauncher.json"
+chmod +x "$stage/setup.sh" "$stage/ProjectGauntlet"
 
 # capstone 5.0.7 (manylinux wheel: pure Python + its own libcapstone.so)
 whl_dir=${GT_CACHE:-$HOME/.cache/project-gauntlet}

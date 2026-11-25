@@ -1,0 +1,176 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "Project Gauntlet",
+  "inputs": [
+    {
+      "id": "game",
+      "role": "game",
+      "label": "Your copy of Gauntlet: Dark Legacy for the original Xbox, USA (NTSC-U): its disc image (.iso or .xiso), or its extracted folder with Default.xbe.",
+      "formats": [{ "type": "file", "extensions": ["iso", "xiso"] }, { "type": "folder" }],
+      "check": { "xdvdfs": "shell3D.pdb", "file": "shell3D.pdb" }
+    }
+  ],
+  "start": {
+    "program": ["ProjectGauntlet.exe", "ProjectGauntlet"],
+    "args": ["--play", "--data={data}"]
+  },
+  "prepare": {
+    "program": ["ProjectGauntlet.exe", "ProjectGauntlet"],
+    "args": ["--prepare", "--game={input:game}", "--data={data}"],
+    "label": "Builds the game from your disc (on Windows the first time downloads the llvm-mingw compiler, 190 MB; on Linux it uses your clang or gcc)",
+    "done": ["{data}/build/version.txt", "{data}/game/Default.xbe"],
+    "keeps_copy": true
+  },
+  "config": [
+    {
+      "id": "main",
+      "format": "ini",
+      "file": [{ "path": "{data}/settings.ini" }]
+    }
+  ],
+  "settings": [
+    {
+      "id": "window", "label": "Window", "group": "Display",
+      "help": "Fullscreen is borderless and uses your screen's own resolution. F11 switches in the game.",
+      "choices": [
+        { "label": "Windowed", "set": { "settings/GT_FULLSCREEN": "0" } },
+        { "label": "Fullscreen", "set": { "settings/GT_FULLSCREEN": "1" } }
+      ],
+      "defaults": { "settings/GT_FULLSCREEN": "0" }
+    },
+    {
+      "id": "screen", "label": "Screen", "group": "Display",
+      "help": "Widescreen fills your screen and shows more of the level.",
+      "choices": [
+        { "label": "Widescreen", "set": { "settings/GT_WIDESCREEN": "1" } },
+        { "label": "4:3 original", "set": { "settings/GT_WIDESCREEN": "0" } }
+      ],
+      "defaults": { "settings/GT_WIDESCREEN": "1" }
+    },
+    {
+      "id": "fps", "label": "Frame rate", "group": "Display",
+      "help": "The game plays at the same speed at both. 30 is the Xbox's own.",
+      "choices": [
+        { "label": "60", "set": { "settings/GT_FPS": "60" } },
+        { "label": "30", "set": { "settings/GT_FPS": "30" } }
+      ],
+      "defaults": { "settings/GT_FPS": "60" }
+    },
+    {
+      "id": "scale", "label": "Resolution", "group": "Graphics",
+      "help": "What the game draws at. Higher is sharper and needs a faster graphics card.",
+      "choices": [
+        { "label": "Auto (fits your screen)", "set": { "settings/GT_SCALE": "0" } },
+        { "label": "1x (480 lines)", "set": { "settings/GT_SCALE": "1" } },
+        { "label": "2x (960 lines)", "set": { "settings/GT_SCALE": "2" } },
+        { "label": "3x (1440 lines)", "set": { "settings/GT_SCALE": "3" } },
+        { "label": "4x (1920 lines)", "set": { "settings/GT_SCALE": "4" } },
+        { "label": "5x (2400 lines)", "set": { "settings/GT_SCALE": "5" } },
+        { "label": "6x (2880 lines)", "set": { "settings/GT_SCALE": "6" } }
+      ],
+      "defaults": { "settings/GT_SCALE": "0" }
+    },
+    {
+      "id": "msaa", "label": "Anti-aliasing", "group": "Graphics",
+      "help": "Smooths jagged edges (MSAA).",
+      "choices": [
+        { "label": "Off", "set": { "settings/GT_MSAA": "1" } },
+        { "label": "2x", "set": { "settings/GT_MSAA": "2" } },
+        { "label": "4x", "set": { "settings/GT_MSAA": "4" } },
+        { "label": "8x", "set": { "settings/GT_MSAA": "8" } }
+      ],
+      "defaults": { "settings/GT_MSAA": "4" }
+    },
+    {
+      "id": "fxaa", "label": "FXAA", "group": "Graphics",
+      "help": "Smooths the edges that anti-aliasing leaves, a little softer.",
+      "choices": [
+        { "label": "Off", "set": { "settings/GT_FXAA": "0" } },
+        { "label": "On", "set": { "settings/GT_FXAA": "1" } }
+      ],
+      "defaults": { "settings/GT_FXAA": "0" }
+    },
+    {
+      "id": "aniso", "label": "Texture filtering", "group": "Graphics",
+      "help": "Keeps floors and walls sharp at shallow angles.",
+      "choices": [
+        { "label": "Off", "set": { "settings/GT_ANISO": "1" } },
+        { "label": "2x", "set": { "settings/GT_ANISO": "2" } },
+        { "label": "4x", "set": { "settings/GT_ANISO": "4" } },
+        { "label": "8x", "set": { "settings/GT_ANISO": "8" } },
+        { "label": "16x", "set": { "settings/GT_ANISO": "16" } }
+      ],
+      "defaults": { "settings/GT_ANISO": "16" }
+    },
+    {
+      "id": "drawdist", "label": "Draw distance", "group": "Graphics",
+      "help": "How far away the level and its enemies are drawn.",
+      "choices": [
+        { "label": "Xbox", "set": { "settings/GT_DRAWDIST": "100" } },
+        { "label": "1.5x", "set": { "settings/GT_DRAWDIST": "150" } },
+        { "label": "2x", "set": { "settings/GT_DRAWDIST": "200" } },
+        { "label": "3x", "set": { "settings/GT_DRAWDIST": "300" } }
+      ],
+      "defaults": { "settings/GT_DRAWDIST": "100" }
+    },
+    {
+      "id": "sharpen", "label": "Sharpening", "group": "Graphics",
+      "help": "Makes the picture crisper. Good with HD textures.",
+      "choices": [
+        { "label": "Off", "set": { "settings/GT_SHARPEN": "0" } },
+        { "label": "Low", "set": { "settings/GT_SHARPEN": "30" } },
+        { "label": "Medium", "set": { "settings/GT_SHARPEN": "60" } },
+        { "label": "High", "set": { "settings/GT_SHARPEN": "100" } }
+      ],
+      "defaults": { "settings/GT_SHARPEN": "0" }
+    },
+    {
+      "id": "crt", "label": "CRT scanlines", "group": "Graphics",
+      "help": "The look of an old TV.",
+      "choices": [
+        { "label": "Off", "set": { "settings/GT_CRT": "0" } },
+        { "label": "On", "set": { "settings/GT_CRT": "1" } }
+      ],
+      "defaults": { "settings/GT_CRT": "0" }
+    },
+    {
+      "id": "hitflash", "label": "Hit flash", "group": "Graphics",
+      "help": "The white flash on characters that are hit. Full is the Xbox's own.",
+      "choices": [
+        { "label": "Off", "set": { "settings/GT_HITFLASH": "0" } },
+        { "label": "Soft", "set": { "settings/GT_HITFLASH": "35" } },
+        { "label": "Full", "set": { "settings/GT_HITFLASH": "100" } }
+      ],
+      "defaults": { "settings/GT_HITFLASH": "35" }
+    },
+    {
+      "id": "pads", "label": "Players", "group": "Controls",
+      "help": "Gamepads in the game. Up to four players on one screen.",
+      "choices": [
+        { "label": "1", "set": { "settings/GT_PADS": "1" } },
+        { "label": "2", "set": { "settings/GT_PADS": "2" } },
+        { "label": "3", "set": { "settings/GT_PADS": "3" } },
+        { "label": "4", "set": { "settings/GT_PADS": "4" } }
+      ],
+      "defaults": { "settings/GT_PADS": "1" }
+    }
+  ],
+  "folders": {
+    "game": [{ "path": "{data}" }],
+    "saves": [{ "path": "{data}/out/hdd/p1/UDATA" }],
+    "logs": [{ "path": "{data}/out" }]
+  },
+  "saves": ["{data}/out/hdd/p1/UDATA", "{data}/settings.ini"],
+  "actions": [
+    { "id": "saves", "label": "Saves", "help": "Your heroes and their progress.", "open": "saves" },
+    { "id": "logs", "label": "Logs", "help": "The game's log, for bug reports.", "open": "logs" }
+  ],
+  "exit_codes": {
+    "2": "The game isn't set up yet. Press Set Up Again on the game's page."
+  },
+  "system": {
+    "windows": { "version": "10", "graphics": { "d3d11": "11_0" } },
+    "linux": { "glibc": "2.38", "graphics": { "vulkan": "1.1" } }
+  }
+}

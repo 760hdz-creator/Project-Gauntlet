@@ -6,22 +6,21 @@ the game is lifted and compiled on the player's PC from their own disc image.
 ## Pieces
 - `tools/package.py` -> `dist/payload.zip` from an allowlist of git-tracked files (`SHIP`: recomp lifter + tables,
   runtime source, `tools/gt_build.py`, `extract_xiso.py`, `match_pdb.py`, `pdb2.py`, `xbedis.py`, the toolchain
-  script), the embedded CPython 3.15 (python.org) and the capstone package (BSD) + `licenses/`. Aborts if a
+  script `tools/bootstrap.py`), the embedded CPython 3.15 (python.org) and the capstone package (BSD) + `licenses/`. Aborts if a
   `FORBIDDEN` pattern (xbe/iso/pdb/xbx/wmv/game/lifted/pdb_match/ps2/wad) is staged. ~14 MB.
 - `installer/setup.cpp` (custom Win32 window over `installer/res/installer_bg.png`, icon `res/app.ico` = the rune
-  stone): unpacks the payload with System32\tar.exe, runs `installer/install_toolchain.ps1` elevated when LLVM
-  clang-cl or the VS C++ build tools are missing (VS 2022 Build Tools VCTools + LLVM 23.1.4, from their makers),
-  then `python\python.exe -I tools\gt_build.py --root <dir> --iso <image> --version <ver>`. Progress from the
+  stone): unpacks the payload with System32\tar.exe, runs `python\python.exe -I tools\gt_build.py --root <dir> --iso <image> --version <ver>`. Progress from the
   build's `## ` lines (and `compiled (n/m)`), errors from `ERROR: `; log `<dir>\build\setup.log`. Then shortcuts,
   `HKCU\Software\ProjectGauntlet` (InstallLocation, Version) and an HKCU uninstall entry (`uninstall.exe`, a copy of
   the setup, `--uninstall --dir`; keeps `out\` = saves). Default folder `%LOCALAPPDATA%\Project Gauntlet` (per user,
-  no admin except the toolchain step).
+  no admin).
   - Over an existing install it asks: update (new kit + rebuild from the installed data, no disc) or full reinstall.
   - Command line: `--update [--dir X]` (the game's updater; starts at once), `--uninstall [--dir X]`,
     `--iso <image> [--dir X]` (full install, starts at once: testing).
 - `tools/gt_build.py`: extract (XDVDFS) -> `game\`, SHA-256 of `Default.xbe` (0982be1a...) -> `match_pdb.py` with the
-  disc's `shell3D.pdb` -> `build\pdb_match.tsv` -> `lift.py` -> `build\lifted\` -> clang-cl (vcvars env via vswhere,
-  LLVM from Program Files) in parallel -> `lld-link /SUBSYSTEM:WINDOWS` -> `<dir>\gauntlet.exe`, built with
+  disc's `shell3D.pdb` -> `build\pdb_match.tsv` -> `lift.py` -> `build\lifted\` -> llvm-mingw 20261104 (`tools/bootstrap.py`:
+  pinned SHA-256, GitHub release, to `<dir>\toolchain`, ~190 MB, first install only, no admin) in parallel ->
+  `<dir>\gauntlet.exe` (`-static -mwindows`; imports only system DLLs), built with
   `-DGT_VERSION="<ver>"`. About 1 minute on the dev box (8 jobs).
 - Installed `gauntlet.exe` runs from its own folder (cwd = exe dir when `game\Default.xbe` is not found), logs to
   `out\gauntlet.log` (no console), and relaunches itself on HalReturnToFirmware(1..3) (XAPI quick-reboots once on
@@ -52,7 +51,7 @@ the game is lifted and compiled on the player's PC from their own disc image.
 
 ## Release steps
 1. Bump `VERSION`; `git add` new tracked files (package.py stages from `git ls-files`).
-2. `installer\build.bat` -> `dist\ProjectGauntlet-Setup-<ver>.exe`.
+2. `installer\build.bat` -> `dist\ProjectGauntlet-Setup-<ver>.exe` + `dist\ProjectGauntlet-<ver>-Windows-x64.zip` (attach both).
 3. Test: `dist\ProjectGauntlet-Setup-<ver>.exe --iso <image> --dir <empty folder>` (and Windows Sandbox for a clean PC).
 4. Tag `v<ver>`, push both remotes, then publish on the forge (the updater reads it) and GitLab:
    `tea release create --login forge --repo 8gramlabs/Project-Gauntlet --tag v<ver> --title v<ver> --note "<notes>"
@@ -82,8 +81,18 @@ the game is lifted and compiled on the player's PC from their own disc image.
 - Not run on a clean PC (toolchain install, file dialogs): test in Windows Sandbox.
 - Setup and game exe are unsigned (SmartScreen / Defender may warn).
 
+## RecompLauncher
+- `recomplauncher.json` (repo root) ships in the Windows zip (installer/build.bat) and the Linux package (package_linux.sh), at
+  the top. Guide: https://github.com/elripalda/RecompLauncher, docs/ADD-SUPPORT.md and DEVELOPERS.md; keep it in step with the
+  GT_* settings. Every choice writes an explicit value (an empty one would reach atoi as 0); GT_SCALE=0 is the automatic scale.
+- One program, `ProjectGauntlet(.exe)`: `--prepare --game=<image or extracted folder> --data=<folder>` builds there without a
+  window (`progress 0.4 Text` lines, log in build/setup.log, build/version.txt last), `--play --data=<folder>` plays and waits.
+  Without them: the setup (Linux: setup.sh), or our launcher in RECOMPLAUNCHER_DATA when Easy Setup is skipped (no registry,
+  shortcuts, updates). build/disc.txt marks a complete copy of the disc: later runs build without the image (`keeps_copy`).
+- Needs a compiler: Windows downloads llvm-mingw, Linux uses the system's (there is none in the RecompLauncher Flatpak).
+
 ## Linux (branch `linux`)
-- Package `ProjectGauntlet-Linux-<ver>.tar.gz` from `tools/package_linux.sh` (run in WSL/Linux on a checkout of the
+- Package `ProjectGauntlet-Linux-x64-<ver>.tar.gz` from `tools/package_linux.sh` (run in WSL/Linux on a checkout of the
   branch): `setup.sh`, `README-Linux.txt`, `kit/` = the SHIP files (LF), `tools/pyrun.py`, capstone 5.0.7 from the
   manylinux wheel in `kit/pylib`, and the prebuilt runtime `kit/linux/libgtrt.a` (our code, built by
   `tools/build_linux.sh` with `-DGT_VERSION`) + `kit/linux/lib/` (SDL3, DXVK Native D3D11/DXGI, vkd3d-shader) +

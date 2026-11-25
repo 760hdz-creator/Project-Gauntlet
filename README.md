@@ -7,6 +7,8 @@
 [![Download the latest release](https://img.shields.io/badge/Download-latest%20release-2ea44f?style=for-the-badge&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPGRlZnM%2BPGNsaXBQYXRoIGlkPSJsIj48cmVjdCB3aWR0aD0iMTIiIGhlaWdodD0iMjQiLz48L2NsaXBQYXRoPjxjbGlwUGF0aCBpZD0iciI%2BPHJlY3QgeD0iMTIiIHdpZHRoPSIxMiIgaGVpZ2h0PSIyNCIvPjwvY2xpcFBhdGg%2BPC9kZWZzPjxwYXRoIGQ9Ik03IDUgMi41IDEyIDcgMTkiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2Y1ZjdmYSIgc3Ryb2tlLXdpZHRoPSIyLjYiIHN0cm9rZS1saW5lam9pbj0ibWl0ZXIiLz48cGF0aCBkPSJNMTcgNSAyMS41IDEyIDE3IDE5IiBmaWxsPSJub25lIiBzdHJva2U9IiNmYjYxMTYiIHN0cm9rZS13aWR0aD0iMi42IiBzdHJva2UtbGluZWpvaW49Im1pdGVyIi8%2BPGcgZmlsbD0ibm9uZSIgc3Ryb2tlLXdpZHRoPSIyLjMiPjxnIGNsaXAtcGF0aD0idXJsKCNsKSIgc3Ryb2tlPSIjZjVmN2ZhIj48Y2lyY2xlIGN4PSIxMiIgY3k9IjgiIHI9IjMuMyIvPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTYiIHI9IjMuNiIvPjwvZz48ZyBjbGlwLXBhdGg9InVybCgjcikiIHN0cm9rZT0iI2ZiNjExNiI%2BPGNpcmNsZSBjeD0iMTIiIGN5PSI4IiByPSIzLjMiLz48Y2lyY2xlIGN4PSIxMiIgY3k9IjE2IiByPSIzLjYiLz48L2c%2BPC9nPjwvc3ZnPgo=)](https://git.8gramlabs.com/8gramlabs/Project-Gauntlet/releases/latest)
 <a href="https://git.8gramlabs.com/8gramlabs/Project-Gauntlet/releases/latest"><img src="https://git.8gramlabs.com/badge/8gramlabs/Project-Gauntlet/downloads.svg" alt="Downloads"></a>
 
+<a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+
 [![HD textures (optional)](https://img.shields.io/badge/HD%20textures-optional%20pack-1e88e5?style=for-the-badge&logo=googledrive&logoColor=white)](https://drive.google.com/file/d/1QN0gNCpc3p0pgFx2zmSlYOAePSD4DEMY/view?usp=drive_link)
 
 [![Windows](https://img.shields.io/badge/Windows-supported-0078D6?logo=windows&logoColor=white)](#install)
@@ -104,16 +106,18 @@ Left: the original textures. Right: the HD pack. The yellow box on each full vie
    [releases](https://git.8gramlabs.com/8gramlabs/Project-Gauntlet/releases) page.
 2. Run the setup. Choose your disc image (`.iso` / `.xiso`), an install folder and, optionally, an HD texture pack
    folder.
-3. Click **Install**. On first install the setup downloads the build tools if they are missing: Visual Studio
-   Build Tools (C++) and LLVM, about 3 GB from Microsoft and llvm.org. It then extracts, translates and compiles the
-   game. Expect 10 to 20 minutes the first time and about 1 minute for updates.
+3. Click **Install**. On first install the setup downloads the compiler (llvm-mingw, about 190 MB) into the install
+   folder. No administrator rights are needed. It then extracts, translates and compiles the game. Expect a few minutes
+   the first time and about 1 minute for updates.
 4. Start the game with the **Project Gauntlet** shortcut. It opens the launcher.
 
 ![Installer](docs/images/installer.jpg)
 
+Without an installer, or for RecompLauncher: `ProjectGauntlet-<version>-Windows-x64.zip` from the same page.
+
 ### Linux
 
-1. Download `ProjectGauntlet-Linux-<version>.tar.gz` from the
+1. Download `ProjectGauntlet-Linux-x64-<version>.tar.gz` from the
    [releases](https://git.8gramlabs.com/8gramlabs/Project-Gauntlet/releases) page and unpack it.
 2. You need glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39, Linux Mint 22, Arch, SteamOS 3.6 or newer),
    Python 3.9 or newer, clang or gcc, and a Vulkan driver:
@@ -242,8 +246,8 @@ See [docs/design.md](docs/design.md) and [docs/installer.md](docs/installer.md) 
 
 ## Building from source (developers)
 
-Requirements: Visual Studio 2022 Build Tools (C++), LLVM (clang-cl, lld-link), Python 3 with `capstone`, and your
-disc image.
+Requirements: Python 3 with `capstone` and your disc image. The compiler (llvm-mingw) is downloaded into the build
+folder.
 
 ```bat
 python -I tools\gt_build.py --root <build folder> --iso "<path to your disc image>"
@@ -251,7 +255,8 @@ python -I tools\gt_build.py --root <build folder> --iso "<path to your disc imag
 ```
 
 This is the same build the installer runs: extract, check the disc, translate, compile and link.
-`installer\build.bat` packages `dist\ProjectGauntlet-Setup-<version>.exe`.
+`installer\build.bat` packages `dist\ProjectGauntlet-Setup-<version>.exe` and the portable zip (this one needs Visual
+Studio 2022 Build Tools and LLVM).
 
 ## Legal
 

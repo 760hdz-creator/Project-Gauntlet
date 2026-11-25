@@ -86,20 +86,35 @@ __declspec(dllexport) uint8_t *oracle_init(void) {
 
 __declspec(dllexport) uint32_t oracle_ctx_size(void) { return (uint32_t)sizeof(X86Context); }
 
-static int fault_filter(EXCEPTION_POINTERS *ep) {
+/* Host faults inside lifted code: mingw clang has no __try/__except in C. run_guarded captures the full
+ * CPU context (incl. the Win64 callee-saved xmm6-15, which __builtin_longjmp would not restore); a
+ * vectored handler that sees a fault inside the guest call resumes that context with g_faulted set,
+ * so RtlCaptureContext "returns" a second time with identical registers. */
+static CONTEXT g_saved;
+static volatile LONG g_in_guest, g_faulted;
+
+static LONG CALLBACK fault_veh(EXCEPTION_POINTERS *ep) {
     EXCEPTION_RECORD *r = ep->ExceptionRecord;
+    if (!g_in_guest || r->ExceptionCode == 0x406D1388 /* thread name */ || r->ExceptionCode == DBG_PRINTEXCEPTION_C)
+        return EXCEPTION_CONTINUE_SEARCH;
     uintptr_t addr = r->NumberParameters >= 2 ? (uintptr_t)r->ExceptionInformation[1] : 0;
     snprintf(g_err, sizeof g_err, "host exception 0x%08lX at %p, data %p (guest 0x%llX)", r->ExceptionCode,
              r->ExceptionAddress, (void *)addr, (unsigned long long)(addr - (uintptr_t)g_mem));
-    return EXCEPTION_EXECUTE_HANDLER;
+    g_in_guest = 0;
+    g_faulted = 1;
+    *ep->ContextRecord = g_saved;
+    return EXCEPTION_CONTINUE_EXECUTION;
 }
 
-static int run_guarded(GuestFunc f, X86Context *c) {
-    __try {
-        f(c);
-    } __except (fault_filter(GetExceptionInformation())) {
-        return -3;
-    }
+static __attribute__((noinline)) int run_guarded(GuestFunc f, X86Context *c) {
+    static int veh;
+    if (!veh) { AddVectoredExceptionHandler(1, fault_veh); veh = 1; }
+    g_faulted = 0;
+    RtlCaptureContext(&g_saved);
+    if (g_faulted) return -3;
+    g_in_guest = 1;
+    f(c);
+    g_in_guest = 0;
     return 0;
 }
 
@@ -108,7 +123,7 @@ __declspec(dllexport) int oracle_run(uint32_t va, X86Context *c, char *err) {
     if (!f) return -2;
     g_err[0] = 0;
     int rc;
-    if (setjmp(g_jb)) rc = -1;
+    if (setjmp(g_jb)) { g_in_guest = 0; rc = -1; }   /* a trap skipped the end of run_guarded */
     else rc = run_guarded(f, c);
     memcpy(err, g_err, sizeof g_err);
     return rc;

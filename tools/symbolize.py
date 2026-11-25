@@ -10,9 +10,9 @@ import sys
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 syms = []
 for line in open(os.path.join(ROOT, "out", "gauntlet.map"), encoding="latin-1"):
-    m = re.match(r"\s*[0-9a-fA-F]{4}:[0-9a-fA-F]{8}\s+(\S+)\s+([0-9a-fA-F]{16})", line)
+    m = re.match(r"([0-9a-fA-F]{16}) \w (\S+)", line)
     if m:
-        syms.append((int(m.group(2), 16) - 0x140000000, m.group(1)))
+        syms.append((int(m.group(1), 16) - 0x140000000, m.group(2)))
 syms.sort()
 keys = [a for a, _ in syms]
 

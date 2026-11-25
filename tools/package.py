@@ -1,4 +1,4 @@
-"""Stage the installer payload: dist/payload.zip (embedded in ProjectGauntlet-Setup.exe by installer/build.bat).
+"""Stage the installer payload: dist/payload.zip (embedded in ProjectGauntlet-Setup.exe by installer/build.py).
 
 usage: python -I tools/package.py
 Holds only our build kit (git-tracked files from SHIP) + third party: the embedded CPython (python.org) and the

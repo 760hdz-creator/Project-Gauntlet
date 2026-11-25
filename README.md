@@ -255,8 +255,8 @@ python -I tools\gt_build.py --root <build folder> --iso "<path to your disc imag
 ```
 
 This is the same build the installer runs: extract, check the disc, translate, compile and link.
-`installer\build.bat` packages `dist\ProjectGauntlet-Setup-<version>.exe` and the portable zip (this one needs Visual
-Studio 2022 Build Tools and LLVM).
+`python -I installer\build.py` packages `dist\ProjectGauntlet-Setup-<version>.exe` and the portable zip with the same
+compiler. Visual Studio is not needed anywhere.
 
 ## Legal
 

@@ -8,8 +8,4 @@ if [ -f out/missed_targets.txt ]; then
   rm -f out/missed_targets.txt
 fi
 python -I recomp/lift.py game/Default.xbe out/lifted --seeds assets/pdb_match.tsv | tail -3
-rm -f out/lifted/*.obj out/lifted/build_errors.txt
-cmd //c "tools\build_lifted.bat" 2>&1 | grep FAIL || true
-grep error out/lifted/build_errors.txt | head -5 || true
-cmd //c "tools\build_oracle.bat" 2>&1 | grep -iE "error|undefined" || true
-cmd //c "tools\build_runtime.bat" 2>&1 | grep -iE " error|undefined" || true
+python -I tools/build.py | grep -v "^compiled"

@@ -51,7 +51,7 @@ the game is lifted and compiled on the player's PC from their own disc image.
 
 ## Release steps
 1. Bump `VERSION`; `git add` new tracked files (package.py stages from `git ls-files`).
-2. `installer\build.bat` -> `dist\ProjectGauntlet-Setup-<ver>.exe` + `dist\ProjectGauntlet-<ver>-Windows-x64.zip` (attach both).
+2. `python -I installer\build.py` -> `dist\ProjectGauntlet-Setup-<ver>.exe` + `dist\ProjectGauntlet-<ver>-Windows-x64.zip` (attach both).
 3. Test: `dist\ProjectGauntlet-Setup-<ver>.exe --iso <image> --dir <empty folder>` (and Windows Sandbox for a clean PC).
 4. Tag `v<ver>`, push both remotes, then publish on the forge (the updater reads it) and GitLab:
    `tea release create --login forge --repo 8gramlabs/Project-Gauntlet --tag v<ver> --title v<ver> --note "<notes>"
@@ -82,7 +82,7 @@ the game is lifted and compiled on the player's PC from their own disc image.
 - Setup and game exe are unsigned (SmartScreen / Defender may warn).
 
 ## RecompLauncher
-- `recomplauncher.json` (repo root) ships in the Windows zip (installer/build.bat) and the Linux package (package_linux.sh), at
+- `recomplauncher.json` (repo root) ships in the Windows zip (installer/build.py) and the Linux package (package_linux.sh), at
   the top. Guide: https://github.com/elripalda/RecompLauncher, docs/ADD-SUPPORT.md and DEVELOPERS.md; keep it in step with the
   GT_* settings. Every choice writes an explicit value (an empty one would reach atoi as 0); GT_SCALE=0 is the automatic scale.
 - One program, `ProjectGauntlet(.exe)`: `--prepare --game=<image or extracted folder> --data=<folder>` builds there without a

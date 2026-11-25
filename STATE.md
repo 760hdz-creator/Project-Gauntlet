@@ -547,18 +547,19 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   pack link (Google Drive, optional). Packages checked: no disc files, no lifted code, template APK has no libmain/game.
   Old history (8f8fc8c..2504216) still has assets/pdb_match.tsv (function names from the PDB); user told, left as is.
 
-- 2026-11-25 RECOMPLAUNCHER + NO VISUAL STUDIO (branch `recomplauncher`, 0.2.2, local only, NOT pushed or released). Same as
+- 2026-11-25 RECOMPLAUNCHER + NO VISUAL STUDIO (0.2.2). Same as
   Project Underground: recomplauncher.json, --prepare / --play / --data, portable Windows zip, Linux-x64 package (docs/installer.md
   "RecompLauncher"). llvm-mingw builds everything: player (gt_build.py), setup (installer/build.py), dev and oracle (tools/build.py,
   relift.sh). User approved: push and release once the test run passes.
-  - Passed: schema 0 errors; oracle identical to clang-cl (863/54/173, same failures); A/B on an idle PC ~60 fps on both
+  - Passed: schema 0 errors; oracle identical to clang-cl (863/54/173, same failures); A/B in the Tower on an idle PC ~60 fps on both
     (one llvm-mingw run 58-59), same CPU time; Linux setup step in WSL. On the earlier 08:22 zip (setup built by clang-cl): the
     whole Windows setup step with a real compiler download, --play, padtest 35/35, launcher windows.
-  - NOT passed yet: out/dev/rel/rl.py, rl2.py, fresh.py on the FINAL zip/setup (built by llvm-mingw) were stopped for low memory in
-    the first minute (only the four refusal cases ran, all right). The level route reached A1 and stood on a help box on a fresh
-    save: A1 combat on the llvm-mingw build is not seen yet (rl2.py now copies out/hdd). fresh.py backs up and restores the registry.
-  - Then: rebuild the Linux package from the final commit (README changed), merge to main, tag v0.2.2, push both, release 3 files on
-    both, homepage check, submit to RecompLauncher. The recomplauncher.json on the forge's main is live as soon as it is pushed.
+  - Passed on the FINAL files (out/dev/rel/rl.py, rl2.py, route.py, fresh.py): setup step, first-boot restart (2 processes), padtest
+    35/35, A1 route at 60 and 30 fps (combat, stats, back to the Tower; level-end anchor 143.3 s at 30 fps, clang-cl was 143.4),
+    0 FATAL, no missed targets, setup --iso 87 s and --update 76 s (registry and shortcuts restored afterwards). Not tested: inside
+    RecompLauncher, the HD pack on this build, the launcher's own update 0.2.1 -> 0.2.2, the Android APK, a Linux GPU.
+  - Route notes: needs GT_CRYSTALS=1; input_char-1.txt is for 30 fps, input_char-1_60.txt for 60 (the wrong one ends in the Tower's
+    pause menu: the A/B speed run above was that scene). Set GT_INPUT from Python: MSYS mangles the path.
   - Open: Linux needs the system's compiler (Nexus downloads one; Gauntlet would need its split build). No `dumps` (trimmed XISO).
 
 ## Next

@@ -547,6 +547,8 @@ Static recompilation of **Gauntlet: Dark Legacy (Xbox, USA)** to PC.
   pack link (Google Drive, optional). Packages checked: no disc files, no lifted code, template APK has no libmain/game.
   Old history (8f8fc8c..2504216) still has assets/pdb_match.tsv (function names from the PDB); user told, left as is.
 
+- RELEASED v0.2.2 (tag cb83482, 2026-11-25): GitLab + forge, setup, Windows zip and Linux package; downloads from both match the
+  notes. Not yet submitted to RecompLauncher.
 - 2026-11-25 RECOMPLAUNCHER + NO VISUAL STUDIO (0.2.2). Same as
   Project Underground: recomplauncher.json, --prepare / --play / --data, portable Windows zip, Linux-x64 package (docs/installer.md
   "RecompLauncher"). llvm-mingw builds everything: player (gt_build.py), setup (installer/build.py), dev and oracle (tools/build.py,

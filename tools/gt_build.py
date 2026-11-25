@@ -1,6 +1,7 @@
 """Build Project Gauntlet on this PC from the player's own disc image (what the installer runs).
 
 usage: python -I tools/gt_build.py --root <install dir> [--iso <image.iso>] [--jobs N]
+       ... --progress [--game <image or extracted folder>]   (a launcher's setup step: see class Progress)
   1. --iso: extract the XDVDFS image into <root>/game (skipped without --iso: update mode keeps the data)
   2. check game/Default.xbe is the supported USA release (SHA-256)
   3. tools/match_pdb.py (game/shell3D.pdb from the disc) -> <root>/build/pdb_match.tsv
@@ -26,6 +27,7 @@ import traceback
 HERE = os.path.dirname(os.path.abspath(__file__))
 KIT = os.path.dirname(HERE)  # the build kit: recomp/, runtime/, tools/
 XBE_SHA256 = "0982be1a51a045af36032dc98e3a3af37fcadae9f103d1443bd480700a4c6e76"
+WRONG = "This is another game or version. Project Gauntlet needs Gauntlet: Dark Legacy for the original Xbox, USA."
 # Lifted code and runtime type-pun guest memory and rely on x86 integer/float semantics: no strict aliasing, signed
 # overflow wraps, no FMA fusion (float results must match the guest bit for bit).
 CFLAGS = ["-O2", "-g", "-w", "-fno-strict-aliasing", "-fwrapv", "-ffp-contract=off", "-fno-math-errno",
@@ -65,6 +67,44 @@ def rmtree(path):
                     os.chmod(p, os.stat(p).st_mode | stat.S_IWRITE)
         shutil.rmtree(path)
     retry("Could not delete an old folder (close programs that use it and try again)", once)
+
+
+class Progress:
+    """--progress: a launcher runs the build without a window. stdout gets "progress 0.4 Text" lines and, last, what went
+    wrong; everything else goes to <root>/build/setup.log."""
+    AT = {"Extracting": .02, "Copying": .02, "Checking": .25, "Getting": .42, "downloading": .43, "extracting": .5,
+          "Matching": .26, "Translating": .34, "Finding": .52, "Compiling": .54, "Linking": .95, "Done": 1}
+
+    def __init__(self, log):
+        self.out, self.buf, self.err = sys.stdout, "", False
+        os.makedirs(os.path.dirname(log), exist_ok=True)
+        self.log = open(log, "w", encoding="utf-8", buffering=1)
+
+    def write(self, s):
+        self.buf += s
+        while "\n" in self.buf:
+            line, self.buf = self.buf.split("\n", 1)
+            self.log.write(line + "\n")
+            if line.startswith("## "):
+                self.say(f"progress {self.AT.get(line[3:].split(' ')[0], .3)} {line[3:]}")
+            elif line.startswith("compiled ") and line.endswith(")"):
+                a, b = line[line.rindex("(") + 1:-1].split("/")
+                if int(b) > 2:
+                    self.say(f"progress {.54 + .4 * int(a) / int(b):.3f} Compiling ({a} of {b})")
+            elif line.startswith("ERROR: ") or self.err:
+                self.err = True
+                self.say(line.replace("ERROR: ", "", 1))
+        return len(s)
+
+    def say(self, line):
+        self.out.write(line + "\n")
+        self.out.flush()
+
+    def flush(self):
+        self.log.flush()
+
+    def isatty(self):
+        return False
 
 
 def sha256(path):
@@ -132,17 +172,49 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", required=True)
     ap.add_argument("--iso")
+    ap.add_argument("--game", help="like --iso; also a folder with the extracted disc (Default.xbe)")
+    ap.add_argument("--progress", action="store_true")
     ap.add_argument("--version", default="0.0.0")
     ap.add_argument("--jobs", type=int, default=0)
     a = ap.parse_args()
     root = os.path.abspath(a.root)
     game, build = os.path.join(root, "game"), os.path.join(root, "build")
+    ready = os.path.join(build, "version.txt")   # written once the build has finished
+    disc_ok = os.path.join(build, "disc.txt")    # ... once the whole disc is in <root>/game
+    if a.progress:
+        sys.stdout = Progress(os.path.join(build, "setup.log"))
+        exe = os.path.join(root, "gauntlet.exe" if os.name == "nt" else "gauntlet")
+        if all(map(os.path.exists, (ready, disc_ok, exe, os.path.join(game, "Default.xbe")))):
+            with open(ready) as f:
+                if f.read().strip() == a.version:
+                    sys.stdout.say("progress 1 Already built")
+                    return
+    if os.path.exists(ready):
+        os.remove(ready)
+    if a.game and a.progress and os.path.exists(disc_ok):
+        a.game = None   # an update: the disc of the first setup is still there
     py = [sys.executable, "-I"]
     if os.name != "nt":   # Linux: the kit's capstone (pylib/) goes on sys.path; -I ignores PYTHONPATH
         py.append(os.path.join(HERE, "pyrun.py"))
     jobs = a.jobs or max(1, min(os.cpu_count() or 2, 8))
 
+    if a.game and os.path.isdir(a.game):
+        src = os.path.abspath(a.game)
+        if not all(os.path.exists(os.path.join(src, f)) for f in ("Default.xbe", "shell3D.pdb")):
+            fail("Default.xbe and shell3D.pdb are not in that folder. Choose the extracted disc of Gauntlet: Dark Legacy (Xbox, USA).")
+        if sha256(os.path.join(src, "Default.xbe")) != XBE_SHA256:
+            fail(WRONG)
+        if src != os.path.abspath(game):
+            step("Copying the game folder")
+            if os.path.exists(disc_ok):
+                os.remove(disc_ok)
+            rmtree(game)
+            shutil.copytree(src, game)
+    elif a.game:
+        a.iso = a.game
     if a.iso:
+        if os.path.exists(disc_ok):
+            os.remove(disc_ok)
         step("Extracting the disc image")
         rmtree(game)
         code, out = run(py + [os.path.join(HERE, "extract_xiso.py"), a.iso, game])
@@ -150,13 +222,18 @@ def main():
         if code:
             fail("Could not read the disc image. Use an Xbox (XISO or redump) image of Gauntlet: Dark Legacy (USA).")
     xbe = os.path.join(game, "Default.xbe")
+    if a.progress and not os.path.exists(xbe):
+        fail("The game's files are not here any more. Choose your disc image of Gauntlet: Dark Legacy (Xbox, USA) and set it up again.")
     if not os.path.exists(xbe):
         fail("game\\Default.xbe is missing: run a full install with your disc image.")
     step("Checking Default.xbe")
     if sha256(xbe) != XBE_SHA256:
-        fail("Default.xbe is not the supported version (Gauntlet: Dark Legacy, Xbox, USA).")
-
+        fail(WRONG)
     os.makedirs(build, exist_ok=True)
+    if a.iso or a.game:
+        with open(disc_ok, "w") as f:
+            f.write(XBE_SHA256 + "\n")
+
     tsv = os.path.join(build, "pdb_match.tsv")
     step("Matching symbols (about 1 minute)")
     code, out = run(py + [os.path.join(HERE, "match_pdb.py"), xbe, os.path.join(game, "shell3D.pdb"), tsv])

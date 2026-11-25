@@ -54,6 +54,7 @@ enum { ID_ISO_EDIT = 200, ID_ISO_BROWSE, ID_DIR_EDIT, ID_DIR_BROWSE, ID_DESKTOP,
 
 static HWND g_wnd, g_status, g_progress, g_iso, g_dir, g_install, g_hd, g_hdStatus, g_hdUse, g_updBtn;
 static bool g_updating, g_running, g_ok, g_launcher;
+static bool g_portable;   // started by RecompLauncher: everything stays in its data folder (no registry, shortcuts or updates)
 static std::wstring g_instDir;   // launcher: the install folder (the exe's own folder)
 // Buttons are owner-drawn (dark, on the art). GWLP_USERDATA: 1 push button, 2 toggle (checkbox), | 4 when ticked.
 static bool IsOn(int id) { return (GetWindowLongPtrW(GetDlgItem(g_wnd, id), GWLP_USERDATA) & 4) != 0; }
@@ -158,6 +159,18 @@ static std::wstring ExeDir() {
     GetModuleFileNameW(nullptr, self, MAX_PATH);
     std::wstring d = self;
     return d.substr(0, d.find_last_of(L'\\'));
+}
+// The game runs from its exe: it cannot be replaced while it is open. Waits up to 15 s (the game may be closing for this update).
+static bool GameClosed(const std::wstring& dir) {
+    std::wstring exe = dir + L"\\gauntlet.exe";
+    for (int i = 0; i < 30; i++) {
+        HANDLE h = CreateFileW(exe.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (h != INVALID_HANDLE_VALUE) { CloseHandle(h); return true; }
+        DWORD e = GetLastError();
+        if (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND) return true;
+        Sleep(500);
+    }
+    return false;
 }
 // Copies this exe to <dir>\launcher.exe. Retries for 15 s: the launcher that started this update may still be closing.
 static bool InstallLauncher(const std::wstring& dir) {
@@ -278,7 +291,7 @@ static void Work(std::wstring iso, std::wstring dir, std::wstring hd, bool deskt
         return done(false);
     }
     // the launcher (a copy of this setup) is what the shortcuts and the uninstall entry run
-    if (!InstallLauncher(dir)) {
+    if (!g_portable && !InstallLauncher(dir)) {
         g_error = L"Could not write " + dir + L"\\launcher.exe (is the launcher still open?).";
         return done(false);
     }
@@ -288,6 +301,7 @@ static void Work(std::wstring iso, std::wstring dir, std::wstring hd, bool deskt
         IniSet(dir, L"launcher", L"HdFolder", hd);
         IniSet(dir, L"settings", L"GT_HDTEX", hd);
     }
+    if (g_portable) { PostProgress(100); return done(true); }
     // shortcuts: the ticked ones, and on an update the existing ones (older ones pointed at gauntlet.exe)
     std::wstring desk = KnownDir(FOLDERID_Desktop) + L"\\" + kShortcut, sm = KnownDir(FOLDERID_Programs) + L"\\" + kShortcut;
     if (desktop || Exists(desk)) MakeShortcut(desk, un, dir, L"--launcher");
@@ -545,6 +559,8 @@ static void LoadSettings() {
     for (auto& cs : kCombos) {
         std::wstring v = IniGet(g_instDir, L"settings", cs.key);
         int sel = 0;
+        for (int i = 0; i < cs.n; i++)   // a value that is not in the list (another launcher's): the default
+            if (!cs.c[i].value) sel = i;
         for (int i = 0; i < cs.n; i++)
             if (cs.c[i].value ? v == cs.c[i].value : v.empty()) sel = i;
         SendDlgItemMessageW(g_wnd, cs.id, CB_SETCURSEL, sel, 0);
@@ -580,7 +596,40 @@ static void SaveSettings() {
     IniSet(g_instDir, L"launcher", L"HdFolder", folder);
     IniSet(g_instDir, L"settings", L"GT_HDTEX", !IsOn(ID_HD_USE) ? L"0" : folder);
 }
+// Starts the game in dir and waits for it, also when it starts itself again (a first start does, as the Xbox reboots).
+static int RunGame(const std::wstring& dir) {
+    SetEnvironmentVariableW(L"GT_NOUPDATE", L"1");
+    wchar_t mode[32] = L"";
+    if (GetEnvironmentVariableW(L"RECOMPLAUNCHER_MODE", mode, 32) && !wcscmp(mode, L"bigpicture"))
+        SetEnvironmentVariableW(L"GT_FULLSCREEN", L"1");
+    std::wstring exe = dir + L"\\gauntlet.exe", cmd = L"\"" + exe + L"\"";
+    STARTUPINFOW si = {sizeof si};
+    PROCESS_INFORMATION pi;
+    HANDLE job = CreateJobObjectW(nullptr, nullptr);
+    if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED, nullptr, dir.c_str(), &si, &pi)) return 1;
+    if (job) AssignProcessToJobObject(job, pi.hProcess);
+    ResumeThread(pi.hThread);
+    CloseHandle(pi.hThread);
+    DWORD code = 1;
+    for (HANDLE p = pi.hProcess; p;) {
+        WaitForSingleObject(p, INFINITE);
+        GetExitCodeProcess(p, &code);
+        CloseHandle(p);
+        p = nullptr;
+        JOBOBJECT_BASIC_PROCESS_ID_LIST l = {};
+        if (job && QueryInformationJobObject(job, JobObjectBasicProcessIdList, &l, sizeof l, nullptr) && l.NumberOfProcessIdsInList)
+            p = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)l.ProcessIdList[0]);
+    }
+    if (job) CloseHandle(job);
+    return (int)code;
+}
 static bool PlayGame() {
+    if (g_portable) {
+        if (!Exists(g_instDir + L"\\gauntlet.exe")) return false;
+        ShowWindow(g_wnd, SW_HIDE);
+        RunGame(g_instDir);
+        return true;
+    }
     SetEnvironmentVariableW(L"GT_NOUPDATE", L"1");   // the launcher already checked
     std::wstring exe = g_instDir + L"\\gauntlet.exe", cmd = L"\"" + exe + L"\"";
     STARTUPINFOW si = {sizeof si};
@@ -932,6 +981,12 @@ static void Start() {
 
 // After an install: open the launcher.
 static void Launch(const std::wstring& dir) {
+    if (g_portable) {
+        wchar_t self[MAX_PATH];
+        GetModuleFileNameW(nullptr, self, MAX_PATH);
+        ShellExecuteW(nullptr, L"open", self, L"--launcher", nullptr, SW_SHOWNORMAL);
+        return;
+    }
     ShellExecuteW(nullptr, L"open", (dir + L"\\launcher.exe").c_str(), L"--launcher", dir.c_str(), SW_SHOWNORMAL);
 }
 
@@ -1192,6 +1247,49 @@ static void CreateLauncherControls() {
     SetFocus(play);
 }
 
+// --prepare: the setup step of RecompLauncher, without a window ("progress 0.4 Text" lines on stdout; tools\gt_build.py).
+static void Out(const std::string& s) {
+    DWORD w;
+    WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), s.data(), (DWORD)s.size(), &w, nullptr);
+}
+static int Prepare(const std::wstring& game, const std::wstring& dir) {
+    if (dir.empty()) { Out("--prepare needs --data <folder>\n"); return 2; }
+    std::string ver;   // nothing to do: the same version is already built (its build\version.txt is written last)
+    if (FILE* f = _wfopen((dir + L"\\build\\version.txt").c_str(), L"r")) {
+        char b[64] = "";
+        if (fgets(b, sizeof b, f)) ver = b;
+        fclose(f);
+        while (!ver.empty() && (ver.back() == '\n' || ver.back() == '\r')) ver.pop_back();
+    }
+    if (ver == GT_SETUP_VERSION && Exists(dir + L"\\gauntlet.exe") && Exists(dir + L"\\build\\disc.txt") &&
+        Exists(dir + L"\\game\\Default.xbe")) {
+        Out("progress 1 Already built\n");
+        return 0;
+    }
+    if (!GameClosed(dir)) { Out("Project Gauntlet is running. Close the game, then try again.\n"); return 1; }
+    Out("progress 0.01 Copying files\n");
+    if (!Unpack(dir)) { Out("Could not write the files to the game's folder.\n"); return 1; }
+    std::wstring cmd = L"\"" + dir + L"\\python\\python.exe\" -I -B \"" + dir + L"\\tools\\gt_build.py\" --progress --root \"" + dir +
+                       L"\" --version " + kVersion;
+    if (!game.empty()) cmd += L" --game \"" + game + L"\"";
+    STARTUPINFOW si = {sizeof si};
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+    si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    for (HANDLE h : {si.hStdOutput, si.hStdError}) SetHandleInformation(h, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+    PROCESS_INFORMATION pi;
+    if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, dir.c_str(), &si, &pi)) {
+        Out("Could not start the build.\n");
+        return 1;
+    }
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+    return (int)code;
+}
+
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -1199,8 +1297,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     InitCommonControlsEx(&icc);
     int argc = 0;
     wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    std::wstring dirArg, isoArg, hdArg;
-    bool update = false, uninstall = false, launcher = false;
+    std::wstring dirArg, isoArg, hdArg, gameArg, dataArg;
+    bool update = false, uninstall = false, launcher = false, prepare = false, play = false;
+    auto value = [&](int& i, const wchar_t* name, std::wstring& to) {   // --name value, or --name=value
+        size_t n = wcslen(name);
+        if (wcsncmp(argv[i], name, n)) return false;
+        if (argv[i][n] == L'=') { to = argv[i] + n + 1; return true; }
+        if (argv[i][n] || i + 1 >= argc) return false;
+        to = argv[++i];
+        return true;
+    };
     for (int i = 1; i < argc; i++) {
         if (!wcscmp(argv[i], L"--update")) update = true;
         else if (!wcscmp(argv[i], L"--uninstall")) uninstall = true;
@@ -1208,6 +1314,19 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         else if (!wcscmp(argv[i], L"--dir") && i + 1 < argc) dirArg = argv[++i];
         else if (!wcscmp(argv[i], L"--iso") && i + 1 < argc) isoArg = argv[++i];
         else if (!wcscmp(argv[i], L"--hd") && i + 1 < argc) hdArg = argv[++i];
+        else if (!wcscmp(argv[i], L"--prepare")) prepare = true;
+        else if (!wcscmp(argv[i], L"--play")) play = true;
+        else if (value(i, L"--game", gameArg) || value(i, L"--data", dataArg)) continue;
+    }
+    wchar_t rl[MAX_PATH] = L"";
+    GetEnvironmentVariableW(L"RECOMPLAUNCHER_DATA", rl, MAX_PATH);
+    if (dataArg.empty()) dataArg = rl;
+    if (prepare) return Prepare(gameArg, dataArg);
+    if (play) return dataArg.empty() || !Exists(dataArg + L"\\gauntlet.exe") ? 2 : RunGame(dataArg);
+    if (*rl && dirArg.empty()) {   // RecompLauncher without Easy Setup: our own window, in its data folder
+        g_portable = true;
+        dirArg = rl;
+        if (!update && !uninstall && Exists(dirArg + L"\\gauntlet.exe")) launcher = true;
     }
     if (launcher) {   // the installed copy: its own folder is the install
         g_instDir = dirArg.empty() ? ExeDir() : dirArg;
@@ -1264,7 +1383,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     if (launcher) {
         CreateLauncherControls();
         ShowWindow(g_wnd, SW_SHOW);
-        g_worker = std::thread(CheckUpdates);
+        if (g_portable) {
+            EnableWindow(GetDlgItem(g_wnd, ID_UNINSTALL), FALSE);
+            SetWindowTextW(g_status, (std::wstring(L"Version ") + kVersion + L". RecompLauncher brings the updates.").c_str());
+        } else g_worker = std::thread(CheckUpdates);
     } else {
         int x = kPanel.left + 30, t = kPanel.top, fw = kPanel.right - kPanel.left - 60;
         if (!update) {
@@ -1283,8 +1405,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         HWND d = MakeCheck(L"Desktop shortcut", ID_DESKTOP, x, t + 455, 260);
         HWND s = MakeCheck(L"Start menu shortcut", ID_STARTMENU, x + 280, t + 455, 280);
         (void)d; (void)s;
-        SetOn(ID_DESKTOP, !update);
-        SetOn(ID_STARTMENU, !update);
+        SetOn(ID_DESKTOP, !update && !g_portable);
+        SetOn(ID_STARTMENU, !update && !g_portable);
+        if (g_portable) for (int id : {ID_DIR_EDIT, ID_DIR_BROWSE, ID_DESKTOP, ID_STARTMENU}) EnableWindow(GetDlgItem(g_wnd, id), FALSE);
         g_install = Make(L"BUTTON", update ? L"Update" : L"Install", BS_DEFPUSHBUTTON, ID_INSTALL, x, t + 505, 200, 52);
         g_progress = Make(PROGRESS_CLASSW, L"", PBS_SMOOTH, ID_PROGRESS, x, t + 580, fw, 20);
         SendMessageW(g_progress, PBM_SETRANGE, 0, MAKELPARAM(0, 100));

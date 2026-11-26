@@ -17,6 +17,10 @@
 [![Multiplayer](https://img.shields.io/badge/multiplayer-local_4_players-blue)](#features)
 [![Netplay](https://img.shields.io/badge/online_netplay-coming_soon-lightgrey)](#features)
 
+This project is free, and it stays free. I work on it in my free time. If you'd like to support that, you can leave a tip on Ko-fi. Donations are completely optional and don't unlock anything.
+
+[![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/8gram_labs)
+
 A static recompilation by 8gram Labs: the original x86 game code is translated to C and compiled natively for
 64-bit Windows (Direct3D 11), Linux (Vulkan through DXVK) and Android phones (arm64, Vulkan), with HD texture packs,
 widescreen, a locked 60 fps, MSAA, support for almost any controller and a launcher.
@@ -255,13 +259,6 @@ python -I tools\gt_build.py --root <build folder> --iso "<path to your disc imag
 This is the same build the installer runs: extract, check the disc, translate, compile and link.
 `python -I installer\build.py` packages `dist\ProjectGauntlet-Setup-<version>.exe` and the portable zip with the same
 compiler. Visual Studio is not needed anywhere.
-
-## Support
-
-This project is free, and it stays free. I work on it in my free time. If you'd like to support that, you can leave a
-tip on Ko-fi. Donations are completely optional and don't unlock anything.
-
-<a href="https://ko-fi.com/8gram_labs"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi"></a>
 
 ## Legal
 

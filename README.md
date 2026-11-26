@@ -7,8 +7,6 @@
 [![Download the latest release](https://img.shields.io/badge/Download-latest%20release-2ea44f?style=for-the-badge&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPGRlZnM%2BPGNsaXBQYXRoIGlkPSJsIj48cmVjdCB3aWR0aD0iMTIiIGhlaWdodD0iMjQiLz48L2NsaXBQYXRoPjxjbGlwUGF0aCBpZD0iciI%2BPHJlY3QgeD0iMTIiIHdpZHRoPSIxMiIgaGVpZ2h0PSIyNCIvPjwvY2xpcFBhdGg%2BPC9kZWZzPjxwYXRoIGQ9Ik03IDUgMi41IDEyIDcgMTkiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2Y1ZjdmYSIgc3Ryb2tlLXdpZHRoPSIyLjYiIHN0cm9rZS1saW5lam9pbj0ibWl0ZXIiLz48cGF0aCBkPSJNMTcgNSAyMS41IDEyIDE3IDE5IiBmaWxsPSJub25lIiBzdHJva2U9IiNmYjYxMTYiIHN0cm9rZS13aWR0aD0iMi42IiBzdHJva2UtbGluZWpvaW49Im1pdGVyIi8%2BPGcgZmlsbD0ibm9uZSIgc3Ryb2tlLXdpZHRoPSIyLjMiPjxnIGNsaXAtcGF0aD0idXJsKCNsKSIgc3Ryb2tlPSIjZjVmN2ZhIj48Y2lyY2xlIGN4PSIxMiIgY3k9IjgiIHI9IjMuMyIvPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTYiIHI9IjMuNiIvPjwvZz48ZyBjbGlwLXBhdGg9InVybCgjcikiIHN0cm9rZT0iI2ZiNjExNiI%2BPGNpcmNsZSBjeD0iMTIiIGN5PSI4IiByPSIzLjMiLz48Y2lyY2xlIGN4PSIxMiIgY3k9IjE2IiByPSIzLjYiLz48L2c%2BPC9nPjwvc3ZnPgo=)](https://git.8gramlabs.com/8gramlabs/Project-Gauntlet/releases/latest)
 <a href="https://git.8gramlabs.com/8gramlabs/Project-Gauntlet/releases/latest"><img src="https://git.8gramlabs.com/badge/8gramlabs/Project-Gauntlet/downloads.svg" alt="Downloads"></a>
 
-<a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
-
 [![HD textures (optional)](https://img.shields.io/badge/HD%20textures-optional%20pack-1e88e5?style=for-the-badge&logo=googledrive&logoColor=white)](https://drive.google.com/file/d/1QN0gNCpc3p0pgFx2zmSlYOAePSD4DEMY/view?usp=drive_link)
 
 [![Windows](https://img.shields.io/badge/Windows-supported-0078D6?logo=windows&logoColor=white)](#install)
@@ -113,7 +111,7 @@ Left: the original textures. Right: the HD pack. The yellow box on each full vie
 
 ![Installer](docs/images/installer.jpg)
 
-Without an installer, or for RecompLauncher: `ProjectGauntlet-<version>-Windows-x64.zip` from the same page.
+Without an installer: `ProjectGauntlet-<version>-Windows-x64.zip` from the same page.
 
 ### Linux
 

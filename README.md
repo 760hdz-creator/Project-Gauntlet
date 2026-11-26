@@ -256,6 +256,13 @@ This is the same build the installer runs: extract, check the disc, translate, c
 `python -I installer\build.py` packages `dist\ProjectGauntlet-Setup-<version>.exe` and the portable zip with the same
 compiler. Visual Studio is not needed anywhere.
 
+## Support
+
+This project is free, and it stays free. I work on it in my free time. If you'd like to support that, you can leave a
+tip on Ko-fi. Donations are completely optional and don't unlock anything.
+
+<a href="https://ko-fi.com/8gram_labs"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi"></a>
+
 ## Legal
 
 Gauntlet: Dark Legacy is a trademark of its owners. This project is not affiliated with or endorsed by them. It
